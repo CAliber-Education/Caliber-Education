@@ -147,29 +147,15 @@ function SpecificCoursesScroll({
   );
 }
 
-export default function CoursesClient() {
+export default function CoursesClient({ initialCourses }: { initialCourses: Course[] }) {
   const [activeTab, setActiveTab] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [loadingCourses, setLoadingCourses] = useState(true);
-
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const url = process.env.NEXT_PUBLIC_API_URL || "";
-        const cRes = await fetch(`${url}/api/courses`);
-        if (cRes.ok) setCourses(await cRes.json());
-      } catch (e) {
-        console.error("Could not load courses", e);
-      } finally {
-        setLoadingCourses(false);
-      }
-    }
-    loadData();
-  }, []);
+  // Fetched server-side (see courses/page.tsx) so the catalog is present in
+  // the initial HTML for SEO — no client fetch or loading state needed.
+  const courses = initialCourses;
 
   // Deep-link support — e.g. /courses#one-on-one from the homepage's
   // "Book 1:1 Session" button jumps straight into that filter tab.
@@ -255,7 +241,7 @@ export default function CoursesClient() {
 
           {/* Bundle Builder Widget */}
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="z-10 min-w-0">
-            <BundleBuilder courses={courses} loading={loadingCourses} onBuyIndividual={() => window.scrollTo({ top: 700, behavior: "smooth" })} />
+            <BundleBuilder courses={courses} loading={false} onBuyIndividual={() => window.scrollTo({ top: 700, behavior: "smooth" })} />
           </motion.div>
         </div>
 
@@ -395,19 +381,7 @@ export default function CoursesClient() {
               )}
             </div>
 
-            {loadingCourses ? (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {[0, 1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="h-64 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 p-5 space-y-4 animate-pulse">
-                    <div className="h-4 w-16 bg-line-gray-light dark:bg-line-gray-dark rounded" />
-                    <div className="h-4 w-3/4 bg-line-gray-light dark:bg-line-gray-dark rounded" />
-                    <div className="h-3 w-full bg-line-gray-light dark:bg-line-gray-dark rounded" />
-                    <div className="h-3 w-2/3 bg-line-gray-light dark:bg-line-gray-dark rounded" />
-                    <div className="h-8 w-full bg-line-gray-light dark:bg-line-gray-dark rounded mt-6" />
-                  </div>
-                ))}
-              </div>
-            ) : displayed.length > 0 ? (
+            {displayed.length > 0 ? (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <AnimatePresence mode="popLayout">
                   {displayed.map((course, i) => (

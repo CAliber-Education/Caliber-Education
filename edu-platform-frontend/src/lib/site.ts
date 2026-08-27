@@ -1,12 +1,15 @@
 // Single source of truth for the site's canonical URL/name/description —
-// previously duplicated as an independent string literal in layout.tsx,
-// robots.ts, sitemap.ts, and courses/[id]/page.tsx, which made it easy to
-// update three call sites during a domain cutover and miss the fourth.
+// layout.tsx, robots.ts, sitemap.ts, and courses/[id]/page.tsx all import
+// SITE_URL from here rather than each holding their own literal, so a
+// domain change is a one-line edit instead of a repo-wide find-and-replace.
 //
-// Swap SITE_URL for your real custom domain once you have one — a free
-// .netlify.app subdomain is treated as lower-trust by search engines, and
-// this value anchors every relative OG/canonical URL generated on the site.
-export const SITE_URL = "https://caliber-edu.netlify.app";
+// Reads NEXT_PUBLIC_SITE_URL so the eventual custom domain is a Vercel env
+// var change, not a code change — the fallback tracks whichever host is
+// actually live (currently Vercel; the netlify.toml in this repo is a
+// leftover from an earlier, no-longer-served deployment target, confirmed
+// by diffing content served from each host). Update the fallback if the
+// live host changes again before the custom domain is set.
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://caliber-education.vercel.app";
 export const SITE_NAME = "CAliber Education";
 export const SITE_DESCRIPTION =
   "Premium MCQ practice platform for CA Foundation, Intermediate & Final droppers. Timed mock sets, detailed explanations, mentor-led test series, and WhatsApp group access.";

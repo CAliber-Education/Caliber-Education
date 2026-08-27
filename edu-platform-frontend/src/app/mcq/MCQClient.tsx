@@ -36,18 +36,24 @@ import {
   INITIAL_MCQ_BUNDLES,
   DURATION_LABELS,
   calculateMCQCartPrice,
-  normalizeMCQSubject,
-  normalizeMCQBundle,
 } from "@/lib/mcqPricingData";
 
-export default function MCQClient() {
+export default function MCQClient({
+  initialSubjects,
+  initialBundles,
+}: {
+  initialSubjects: MCQSubject[];
+  initialBundles: MCQBundle[];
+}) {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
   const [activeLevel, setActiveLevel] = useState<MCQLevel>("FINAL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [allSubjects, setAllSubjects] = useState<MCQSubject[]>(INITIAL_MCQ_SUBJECTS);
-  const [allBundles, setAllBundles] = useState<MCQBundle[]>(INITIAL_MCQ_BUNDLES);
-  const [loading, setLoading] = useState(true);
+  // Fetched server-side (see mcq/page.tsx) so the catalog is present in the
+  // initial HTML for SEO, falling back to the seeded matrix if the server
+  // fetch came back empty (backend briefly unreachable, etc.).
+  const [allSubjects] = useState<MCQSubject[]>(initialSubjects.length > 0 ? initialSubjects : INITIAL_MCQ_SUBJECTS);
+  const [allBundles] = useState<MCQBundle[]>(initialBundles.length > 0 ? initialBundles : INITIAL_MCQ_BUNDLES);
   const [ownedMcqSubjects, setOwnedMcqSubjects] = useState<string[]>([]);
 
   useEffect(() => {
@@ -89,30 +95,6 @@ export default function MCQClient() {
   const [purchasedInfo, setPurchasedInfo] = useState<{ title: string; amount: number } | null>(null);
   const [showUpiModal, setShowUpiModal] = useState(false);
   const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
-
-  // Fetch backend packages on mount with graceful fallback to seeded matrix
-  useEffect(() => {
-    async function loadPackages() {
-      try {
-        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${apiURL}/api/mcq/packages`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.allSubjects && Array.isArray(data.allSubjects) && data.allSubjects.length > 0) {
-            setAllSubjects(data.allSubjects.map(normalizeMCQSubject));
-          }
-          if (data.allBundles && Array.isArray(data.allBundles) && data.allBundles.length > 0) {
-            setAllBundles(data.allBundles.map(normalizeMCQBundle));
-          }
-        }
-      } catch (err) {
-        console.info("Using pre-loaded MCQ pricing matrix", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadPackages();
-  }, []);
 
   // Filter subjects for the active level
   const levelSubjects = useMemo(() => {
@@ -603,24 +585,8 @@ export default function MCQClient() {
           </div>
         </div>
 
-        {/* Loading State */}
-        {loading ? (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="rounded-3xl border border-white/10 bg-white dark:bg-slate-900/60 p-6 space-y-4 animate-pulse">
-                <div className="flex items-center justify-between">
-                  <div className="h-5 w-16 rounded-lg bg-slate-200 dark:bg-white/10" />
-                  <div className="h-5 w-12 rounded-lg bg-slate-200 dark:bg-white/10" />
-                </div>
-                <div className="h-5 w-3/4 rounded bg-slate-200 dark:bg-white/10" />
-                <div className="h-3 w-full rounded bg-slate-200 dark:bg-white/10" />
-                <div className="h-3 w-2/3 rounded bg-slate-200 dark:bg-white/10" />
-                <div className="h-10 w-full rounded-xl bg-slate-200 dark:bg-white/10 mt-4" />
-              </div>
-            ))}
-          </div>
-        ) : /* Empty State */
-        filteredSubjects.length === 0 ? (
+        {/* Empty State */}
+        {filteredSubjects.length === 0 ? (
           <div className="text-center py-24 bg-slate-100/50 dark:bg-slate-900/30 border border-white/5 rounded-3xl backdrop-blur-xl">
             <BookOpen className="w-12 h-12 text-slate-600 mx-auto mb-3" />
             <h3 className="text-lg font-bold text-ink-navy dark:text-white">No subjects found</h3>
