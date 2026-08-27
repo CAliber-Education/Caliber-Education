@@ -4,7 +4,7 @@ import MCQClient from "./MCQClient";
 export const metadata: Metadata = {
   title: "CA MCQ Practice — Foundation, Intermediate & Final",
   description:
-    "Timed MCQ practice sets for CA Foundation, Intermediate & Final, built to mirror the real exam pattern with full explanations for every question. Try a free set today.",
+    "Timed MCQ practice sets for CA Foundation, Intermediate & Final, built to mirror the real exam pattern with full explanations for every question.",
   alternates: { canonical: "/mcq" },
 };
 
