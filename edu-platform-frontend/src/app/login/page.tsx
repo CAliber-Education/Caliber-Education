@@ -34,7 +34,19 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
-  const [error, setError] = useState("");
+  // AuthContext redirects here when a request comes back 401 for the
+  // currently-stored session token (expired JWT, or signed in elsewhere) —
+  // surface that instead of leaving the form blank with no explanation for
+  // why the user is suddenly looking at a login page again. Checks
+  // sessionStorage too, not just ?expired= — some pages have their own
+  // logged-out redirect guard that can race AuthContext's and land on a
+  // bare /login, dropping the query string.
+  const [error, setError] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const expired = searchParams.get("expired") || sessionStorage.getItem("caliber_session_expired");
+    if (expired) sessionStorage.removeItem("caliber_session_expired");
+    return expired ? "Your session expired. Please sign in again." : "";
+  });
   const [turnstileToken, setTurnstileToken] = useState("");
   const [turnstileKey, setTurnstileKey] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);

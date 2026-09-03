@@ -197,8 +197,8 @@ export default function CoursesClient({ initialCourses }: { initialCourses: Cour
     // 1. Search Query filter (matches title, description, outcomes, level)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const matchTitle = c.title.toLowerCase().includes(q);
-      const matchDesc = c.description.toLowerCase().includes(q);
+      const matchTitle = (c.title || "").toLowerCase().includes(q);
+      const matchDesc = (c.description || "").toLowerCase().includes(q);
       const matchOutcomes = c.outcomes?.some((o) => o.toLowerCase().includes(q)) ?? false;
       const matchLevel = c.level?.toLowerCase().includes(q) ?? false;
 

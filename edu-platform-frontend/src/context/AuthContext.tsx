@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { apiFetch } from "@/lib/apiFetch";
 
 interface User {
@@ -24,10 +25,69 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Patches window.fetch exactly once (module scope, not per-provider-mount —
+// React 18 Strict Mode double-invokes effects in dev, and this must never
+// double-wrap) so any request carrying the CURRENT session's JWT that comes
+// back 401 fires a global event. Comparing the request's Authorization
+// header against the live localStorage token — not just "any 401" — is
+// what keeps this from misfiring on login/signup's own expected 401s
+// (wrong password, expired OTP code, expired signup temp-token): none of
+// those ever send the real session token, since the user isn't logged in
+// yet at that point.
+let authFetchPatched = false;
+function ensureAuthFetchInterceptor() {
+  if (authFetchPatched || typeof window === "undefined") return;
+  authFetchPatched = true;
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (...args: Parameters<typeof fetch>) => {
+    const response = await originalFetch(...args);
+    if (response.status === 401) {
+      try {
+        const init = args[1];
+        const headers = new Headers(init?.headers);
+        const authHeader = headers.get("Authorization");
+        const currentToken = localStorage.getItem("caliber_jwt");
+        if (authHeader && currentToken && authHeader === `Bearer ${currentToken}`) {
+          window.dispatchEvent(new Event("caliber:session-expired"));
+        }
+      } catch {
+        // Never let interceptor bookkeeping break the real response.
+      }
+    }
+    return response;
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [purchasedCourseIds, setPurchasedCourseIds] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Auto-logout the moment the backend rejects the current session's own
+  // token (expired JWT, or the "signed in on another device" concurrent-
+  // session check) — previously every API call just failed silently and
+  // the UI kept showing the user as logged in until they refreshed.
+  useEffect(() => {
+    ensureAuthFetchInterceptor();
+    const handleExpired = () => {
+      setUser(null);
+      localStorage.removeItem("caliber_user");
+      localStorage.removeItem("caliber_jwt");
+      // Some pages have their own "redirect to /login if logged out" guard
+      // that fires right after setUser(null) above and races this push,
+      // sometimes winning and dropping the ?expired= query string — a
+      // sessionStorage flag survives that race regardless of which
+      // redirect's URL actually lands, so the login page still knows why
+      // it's showing.
+      sessionStorage.setItem("caliber_session_expired", "1");
+      const next = pathname && pathname !== "/login" ? `&next=${encodeURIComponent(pathname)}` : "";
+      router.push(`/login?expired=1${next}`);
+    };
+    window.addEventListener("caliber:session-expired", handleExpired);
+    return () => window.removeEventListener("caliber:session-expired", handleExpired);
+  }, [router, pathname]);
 
   // Load from localStorage on mount
   useEffect(() => {

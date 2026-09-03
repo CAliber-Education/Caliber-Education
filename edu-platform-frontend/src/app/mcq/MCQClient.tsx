@@ -104,9 +104,9 @@ export default function MCQClient({
   // Filter subjects for display (flat catalog)
   const filteredSubjects = useMemo(() => {
     return levelSubjects.filter((subject) =>
-      subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      subject.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      subject.description.toLowerCase().includes(searchQuery.toLowerCase())
+      (subject.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (subject.code || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (subject.description || "").toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [levelSubjects, searchQuery]);
 
