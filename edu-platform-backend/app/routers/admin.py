@@ -162,26 +162,60 @@ async def list_payments(
     payments = payments_res.data or []
     total = payments_res.count or 0
 
-    # Multi-course cart purchases (BundleBuilder) store course_id as NULL and
-    # pack the real course ids into utr_number instead ("courses|id1,id2|
-    # suffix" — see create_order's insert), so the `courses(title)` FK embed
-    # above can't resolve them. Batch-resolve every packed id across the page
-    # in one query rather than N+1, so the admin table shows the actual
-    # course names instead of the generic "Multiple/Bundle" placeholder.
-    packed_ids_by_payment: dict = {}
-    all_packed_ids: set = set()
+    # Cart / package purchases can't store what was actually bought in
+    # course_id (it has a straight FK to courses.id, which can't hold a
+    # comma-joined id list or an MCQ/test-series subject slug), so they pack
+    # it into utr_number instead: "courses|id1,id2|suffix" for a BundleBuilder
+    # multi-course cart, "mcq-{level}-{duration}|subjectId1,subjectId2|suffix"
+    # for an MCQ package, "testseries-{level}|subjectId1,subjectId2|suffix"
+    # for a test-series package (see create_order's insert). The `courses
+    # (title)` FK embed above only resolves single real-course purchases, so
+    # everything else used to fall back to a bare "Multiple/Bundle" or a raw
+    # slug like "mcq-final-1_month" with no way to tell what was in it.
+    # Batch-resolve every packed id across the page (one query per item type,
+    # not N+1) so the admin table shows the real course/subject names.
+    packed_course_ids_by_payment: dict = {}
+    packed_mcq_by_payment: dict = {}
+    packed_ts_by_payment: dict = {}
+    all_course_ids: set = set()
+    all_mcq_subject_ids: set = set()
+    all_ts_subject_ids: set = set()
     for p in payments:
         course = p.get("courses") or {}
         utr = p.get("utr_number") or ""
-        if not course.get("title") and utr.startswith("courses|"):
+        if course.get("title"):
+            continue
+        if utr.startswith("courses|"):
             ids = [c.strip() for c in utr.split("|", 2)[1].split(",") if c.strip()]
-            packed_ids_by_payment[p["id"]] = ids
-            all_packed_ids.update(ids)
+            packed_course_ids_by_payment[p["id"]] = ids
+            all_course_ids.update(ids)
+        elif utr.startswith("mcq-"):
+            prefix, _, rest = utr.partition("|")
+            sub_ids = [s.strip() for s in rest.split("|", 1)[0].split(",") if s.strip()]
+            packed_mcq_by_payment[p["id"]] = (prefix, sub_ids)
+            all_mcq_subject_ids.update(sub_ids)
+        elif utr.startswith("testseries-"):
+            prefix, _, rest = utr.partition("|")
+            sub_ids = [s.strip() for s in rest.split("|", 1)[0].split(",") if s.strip()]
+            packed_ts_by_payment[p["id"]] = (prefix, sub_ids)
+            all_ts_subject_ids.update(sub_ids)
 
     course_title_map: dict = {}
-    if all_packed_ids:
-        rows = db.table("courses").select("id, title").in_("id", list(all_packed_ids)).execute().data or []
+    if all_course_ids:
+        rows = db.table("courses").select("id, title").in_("id", list(all_course_ids)).execute().data or []
         course_title_map = {r["id"]: r["title"] for r in rows}
+
+    mcq_subject_map: dict = {}
+    if all_mcq_subject_ids:
+        rows = db.table("mcq_subjects").select("id, name").in_("id", list(all_mcq_subject_ids)).execute().data or []
+        mcq_subject_map = {r["id"]: r["name"] for r in rows}
+
+    ts_subject_map: dict = {}
+    if all_ts_subject_ids:
+        rows = db.table("test_series_subjects").select("id, name").in_("id", list(all_ts_subject_ids)).execute().data or []
+        ts_subject_map = {r["id"]: r["name"] for r in rows}
+
+    DURATION_LABELS = {"1_month": "1 Month", "3_months": "3 Months", "6_months": "6 Months", "1_year": "1 Year"}
 
     verifications = []
     for p in payments:
@@ -192,11 +226,30 @@ async def list_payments(
         utr = p.get("utr_number") or ""
         course_title = course.get("title")
         if not course_title:
-            if utr.startswith("mcq-") or utr.startswith("testseries-"):
-                course_title = utr.split("|")[0]
-            elif p["id"] in packed_ids_by_payment:
-                titles = [course_title_map.get(cid, "Unknown course") for cid in packed_ids_by_payment[p["id"]]]
-                course_title = ", ".join(titles) if titles else "Multiple/Bundle"
+            if p["id"] in packed_course_ids_by_payment:
+                titles = [course_title_map.get(cid, "Unknown course") for cid in packed_course_ids_by_payment[p["id"]]]
+                course_title = "; ".join(titles) if titles else "Multiple/Bundle"
+            elif p["id"] in packed_mcq_by_payment:
+                prefix, sub_ids = packed_mcq_by_payment[p["id"]]
+                # prefix is "mcq-{level}-{duration}" — level itself never
+                # contains a dash, so a maxsplit of 2 always separates cleanly.
+                parts = prefix.split("-", 2)
+                level = parts[1].upper() if len(parts) > 1 else ""
+                duration = DURATION_LABELS.get(parts[2], parts[2].replace("_", " ")) if len(parts) > 2 else ""
+                # "; " (not ", ") joins the subject list — some subject names
+                # (e.g. "Advanced Auditing, Assurance & Professional Ethics")
+                # already contain a comma, which would make a comma-joined
+                # list ambiguous about where one subject ends and the next begins.
+                names = [mcq_subject_map.get(sid, sid) for sid in sub_ids]
+                label = f"MCQ {level}".strip() + (f" · {duration}" if duration else "")
+                course_title = f"{label}: {'; '.join(names)}" if names else (label or "Multiple/Bundle")
+            elif p["id"] in packed_ts_by_payment:
+                prefix, sub_ids = packed_ts_by_payment[p["id"]]
+                parts = prefix.split("-", 1)  # "testseries-{level}"
+                level = parts[1].upper() if len(parts) > 1 else ""
+                names = [ts_subject_map.get(sid, sid) for sid in sub_ids]
+                label = f"Test Series {level}".strip()
+                course_title = f"{label}: {'; '.join(names)}" if names else (label or "Multiple/Bundle")
             else:
                 course_title = "Multiple/Bundle"
 
