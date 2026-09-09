@@ -867,7 +867,7 @@ function PaymentsTab() {
               <motion.tr key={v.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
                 className="hover:bg-line-gray-light/30 dark:hover:bg-line-gray-dark/30 transition-colors">
                 <td className="px-5 py-3.5 text-ink-navy dark:text-paper font-medium">{v.studentEmail}</td>
-                <td className="px-5 py-3.5 text-slate dark:text-paper/70 max-w-[160px] truncate">{v.courseTitle}</td>
+                <td className="px-5 py-3.5 text-slate dark:text-paper/70 max-w-[160px] truncate" title={v.courseTitle}>{v.courseTitle}</td>
                 <td className="px-5 py-3.5 font-mono font-semibold text-ink-navy dark:text-paper">₹{v.amount.toLocaleString()}</td>
                 <td className="px-5 py-3.5">
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${v.paymentMethod === "manual_upi" ? "bg-amber-500/10 text-amber-600" : "bg-blue-500/10 text-blue-600"}`}>

@@ -162,6 +162,27 @@ async def list_payments(
     payments = payments_res.data or []
     total = payments_res.count or 0
 
+    # Multi-course cart purchases (BundleBuilder) store course_id as NULL and
+    # pack the real course ids into utr_number instead ("courses|id1,id2|
+    # suffix" — see create_order's insert), so the `courses(title)` FK embed
+    # above can't resolve them. Batch-resolve every packed id across the page
+    # in one query rather than N+1, so the admin table shows the actual
+    # course names instead of the generic "Multiple/Bundle" placeholder.
+    packed_ids_by_payment: dict = {}
+    all_packed_ids: set = set()
+    for p in payments:
+        course = p.get("courses") or {}
+        utr = p.get("utr_number") or ""
+        if not course.get("title") and utr.startswith("courses|"):
+            ids = [c.strip() for c in utr.split("|", 2)[1].split(",") if c.strip()]
+            packed_ids_by_payment[p["id"]] = ids
+            all_packed_ids.update(ids)
+
+    course_title_map: dict = {}
+    if all_packed_ids:
+        rows = db.table("courses").select("id, title").in_("id", list(all_packed_ids)).execute().data or []
+        course_title_map = {r["id"]: r["title"] for r in rows}
+
     verifications = []
     for p in payments:
         profile = p.get("profiles") or {}
@@ -173,6 +194,9 @@ async def list_payments(
         if not course_title:
             if utr.startswith("mcq-") or utr.startswith("testseries-"):
                 course_title = utr.split("|")[0]
+            elif p["id"] in packed_ids_by_payment:
+                titles = [course_title_map.get(cid, "Unknown course") for cid in packed_ids_by_payment[p["id"]]]
+                course_title = ", ".join(titles) if titles else "Multiple/Bundle"
             else:
                 course_title = "Multiple/Bundle"
 
