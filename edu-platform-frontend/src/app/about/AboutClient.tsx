@@ -26,31 +26,12 @@ const mentors = [
     specialties: ["Financial Due Diligence", "Startup Advisory", "Direct & Indirect Tax"],
   },
   {
-    name: "CA Madhya Jasani",
+    name: "CA Aaditya Agrawal",
     role: "Mentor",
-    initials: "MJ",
-    image: "/MENTOR1.png", // Provided photo
-    bio: "Hey everyone, I'm CA Madhya Jasani, and I'm super excited to help you all with your CA Final journey! I'm based in Mumbai and currently work as an AM for department Funds Practice and Transaction Advisory. I've been through this myself, so I know that passing the CA Final isn't just about how many hours you study—it's about how smart you are with those hours. We'll focus on studying smarter, not just harder. We'll work on realistic revision plans and use active recall techniques to make sure you remember everything for that crucial 1.5-day exam gap. I'll also help you with paper presentation and time management under pressure. If you're stuck on something or need help with your strategy, just reach out whenever you need me—let's make this effort count and get you to the finish line!",
-    specialties: ["Transaction Advisory", "Revision Planning", "Time Management"],
-    linkedin: "https://www.linkedin.com/in/madhya-jasani-5321911b7?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
-  },
-  {
-    name: "CA Ishika Khurana",
-    role: "Mentor",
-    initials: "IK",
-    image: "/MENTOR5.png", // Uploaded photo
-    bio: "Ishika Khurana is a Chartered Accountant and finance professional with articleship experience in Business Valuation, having worked on valuation engagements for both listed and private companies across diverse sectors. A strong academic performer, she secured four exemptions in the CA Final examination, reflecting her dedication and technical proficiency.\n\nThrough structured guidance, practical study strategies, and continuous support, she aims to help students clear their examinations with confidence.",
-    specialties: ["Business Valuation", "Study Strategies", "Exemptions"],
-    linkedin: "https://www.linkedin.com/in/ishika-khurana-its?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
-  },
-  {
-    name: "CA Ishaan Wadekar",
-    role: "Mentor",
-    initials: "IW",
-    image: "/MENTOR2.png",
-    bio: "CA Ishaan Wadekar is an All India Rank 37 holder in the CA Final examination, having cleared all three levels of the Chartered Accountancy course on his first attempt. He secured exemptions in all six subjects at the CA Final level, including an outstanding 76 marks in Auditing, the highest among all his subjects. During his articleship at Deloitte, he gained exposure to statutory audits of listed and large private companies across multiple industries. As a mentor, Ishaan is passionate about helping CA students develop effective study strategies, strengthen conceptual understanding, and approach the examination with confidence and clarity, drawing from his own journey of consistent academic excellence.",
-    specialties: ["AIR 37 Holder", "Auditing", "Study Strategies"],
-    linkedin: "https://www.linkedin.com/in/ca-ishaan-wadekar?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
+    initials: "AA",
+    image: "/mentor10.jpg",
+    bio: "CA Aaditya Agrawal is a Valuation Analyst with the Valuation Advisory Services team at a leading global valuations firm in Mumbai. A Chartered Accountant (All India Rank 23) and CFA Level 3 candidate, he cleared CFA Levels 1 and 2 on his first attempt. He specializes in DCF and comparable company valuation, financial statement analysis, and is highly skilled in advanced Excel, including VBA-based automation. He's passionate about equity markets, financial research, and exploring fintech and automation.",
+    specialties: ["AIR 23 Holder", "Business Valuation", "Advanced Excel & VBA"],
   },
 ];
 const values = [
@@ -106,6 +87,13 @@ export default function AboutClient() {
   // above the rest of the mentor grid (3-column), per the requested layout.
   const founderMentors = mentors.slice(0, 2);
   const otherMentors = mentors.slice(2);
+  // A 3-col grid holding one or two cards renders them left-aligned against
+  // a gap, so cap the track count at the card count and centre the grid.
+  // Widths stay in line with the 3-col sizing; 3+ mentors is unchanged.
+  const otherGridCols =
+    otherMentors.length === 1 ? "max-w-sm"
+    : otherMentors.length === 2 ? "sm:grid-cols-2 max-w-3xl"
+    : "sm:grid-cols-2 lg:grid-cols-3";
 
   return (
     <div className="pt-6">
@@ -125,7 +113,7 @@ export default function AboutClient() {
                 <MentorCard key={m.name} m={m} i={i} onZoom={setZoomedImage} />
               ))}
             </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className={`grid gap-6 mx-auto ${otherGridCols}`}>
               {otherMentors.map((m, i) => (
                 <MentorCard key={m.name} m={m} i={i} onZoom={setZoomedImage} />
               ))}
