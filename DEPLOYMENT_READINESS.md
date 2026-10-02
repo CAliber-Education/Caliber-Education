@@ -16,20 +16,20 @@ Beyond those two, the codebase itself is in solid shape — auth, CORS, secrets 
 
 ---
 
-## Your stack: Render (backend, free) + Netlify (frontend, already deployed) + Supabase (DB)
+## Your stack: Render (backend, free) + Vercel (frontend, already deployed) + Supabase (DB)
 
 Good choice for a free, ~100-200-user startup launch — all three have workable free tiers and your backend is already stateless (no in-memory session data that would break on restarts), so this combination will work correctly. Two things specific to this stack you need to know about:
 
 **1. Render's free tier sleeps after 15 minutes of inactivity.** The first request after an idle period takes 30-60 seconds to wake the backend back up — a real visitor hitting a cold instance will see a long hang on their first page load (login, signup, anything that calls the API). This won't corrupt any data (your backend has no state that depends on staying warm), it's purely a latency/UX issue. **Cheap fix:** once you add the `/health` endpoint (checklist below), point a free external uptime pinger (UptimeRobot, cron-job.org, or similar — all have free tiers) at it every 10-14 minutes to keep the instance from sleeping. At 100-200 users this is a completely reasonable way to run for free; revisit if you outgrow it.
 
-**2. `NEXT_PUBLIC_*` env vars are baked in at Netlify build time, not read live.** Since your backend isn't deployed yet, your live Netlify frontend is currently pointing `NEXT_PUBLIC_API_URL` at whatever placeholder/localhost value it had at last build — it won't work against a real backend until you update that env var in Netlify's dashboard **and trigger a new deploy** (changing the env var alone does nothing until the next build). Same applies to `NEXT_PUBLIC_RAZORPAY_KEY_ID` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
+**2. `NEXT_PUBLIC_*` env vars are baked in at Vercel build time, not read live.** Since your backend isn't deployed yet, your live Vercel frontend is currently pointing `NEXT_PUBLIC_API_URL` at whatever placeholder/localhost value it had at last build — it won't work against a real backend until you update that env var in Vercel's dashboard **and trigger a new deploy** (changing the env var alone does nothing until the next build). Same applies to `NEXT_PUBLIC_RAZORPAY_KEY_ID` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
 
 **Render setup specifics:**
 - Create a new **Web Service** on Render, connect your GitHub repo, set root directory to `edu-platform-backend`.
 - Build command: `pip install -r requirements.txt`
 - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT` — **use `$PORT`, not the hardcoded `8000`** from the Dockerfile. Render assigns the port dynamically and your app must bind to whatever it provides; if you deploy the existing Dockerfile as-is instead of Render's native Python runtime, override the start command in Render's dashboard to respect `$PORT` rather than relying on the Dockerfile's fixed `--port 8000`.
 - Add every backend env var from the checklist below in Render's dashboard (Environment tab) — none of them carry over from your local `.env` automatically.
-- Once deployed, you'll have a URL like `https://your-service.onrender.com` — this becomes your `BACKEND_URL` in Netlify (see section 5's note — `NEXT_PUBLIC_API_URL` should stay empty), your webhook base URL in Razorpay, and your `BACKEND_URL` GitHub Actions secret.
+- Once deployed, you'll have a URL like `https://your-service.onrender.com` — this becomes your `BACKEND_URL` in Vercel (see section 5's note — `NEXT_PUBLIC_API_URL` should stay empty), your webhook base URL in Razorpay, and your `BACKEND_URL` GitHub Actions secret.
 
 At 100-200 users, none of the scalability findings below (blocking Supabase calls on a single worker, in-memory rate limiter) are likely to actually bite you — they're real findings for when you outgrow this stage, not blockers for launch. I've left them in the report below so they're documented, but don't let them slow down shipping at this scale.
 
@@ -78,7 +78,7 @@ Your `edu-platform-backend/supabase/` folder has **19 SQL files** with no number
 - **Rate limiter is in-memory**, not shared (no Redis backend). Fine for a single instance; if you ever scale to multiple backend instances or add `--workers`, rate limits become bypassable by hitting a different process. Worth knowing now so it doesn't surprise you later.
 - **No health check endpoint** (`/health`) and **no error monitoring** (no Sentry or equivalent anywhere). You'll be flying blind on production errors until a user reports one.
 - **File upload paths use the raw uploaded filename** (`tests.py`, `admin.py`) — not a traversal risk against your Storage bucket, but a user-controlled filename with slashes in it could land in an unexpected sub-path. Cheap fix: strip/replace path separators before building the storage key.
-- The repo also has Docker config (`Dockerfile`s, `docker-compose.yml`) for both apps — now that you've settled on Render + Netlify, these aren't needed for deployment; harmless to keep around for local testing, or delete later if you want a cleaner repo.
+- The repo also has Docker config (`Dockerfile`s, `docker-compose.yml`) for both apps — now that you've settled on Render + Vercel, these aren't needed for deployment; harmless to keep around for local testing, or delete later if you want a cleaner repo.
 - **`/docs` and `/redoc`** (full API schema) are publicly reachable with no gating — your call whether that's intentional for a consumer-facing app.
 
 ## 🟡 Medium priority — fix soon after launch, not blocking
@@ -130,12 +130,12 @@ Your `edu-platform-backend/supabase/` folder has **19 SQL files** with no number
 - [ ] Confirm the two Storage buckets (`test-submissions`, `evaluated-papers`, or your configured names) exist in production Supabase
 - [ ] Take a manual Supabase backup/snapshot before any further schema changes, as a safety net
 
-### 3. Hosting (decided: Render + Netlify + Supabase)
+### 3. Hosting (decided: Render + Vercel + Supabase)
 - [ ] Create the Render Web Service (root dir `edu-platform-backend`, build `pip install -r requirements.txt`, start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`)
 - [ ] Set every backend env var from the checklist below in Render's dashboard
-- [ ] Set every frontend env var from the checklist below in Netlify's dashboard. **Updated since this report was written:** `next.config.ts` now proxies `/api/*` to the backend server-side via a `BACKEND_URL` env var (set that to your Render URL in Netlify) rather than the browser calling the backend directly — leave `NEXT_PUBLIC_API_URL` **empty** in production so requests stay same-origin through the proxy. Only fall back to setting `NEXT_PUBLIC_API_URL` directly if you deliberately switch away from the rewrite-proxy pattern, and if you do, make sure the backend's CORS allow-list actually includes your Netlify domain.
-- [ ] Trigger a fresh Netlify deploy after updating env vars — they don't apply until the next build
-- [ ] Set `FRONTEND_URL` in Render's env vars to your real Netlify domain
+- [ ] Set every frontend env var from the checklist below in Vercel's dashboard. **Updated since this report was written:** `next.config.ts` now proxies `/api/*` to the backend server-side via a `BACKEND_URL` env var (set that to your Render URL in Vercel) rather than the browser calling the backend directly — leave `NEXT_PUBLIC_API_URL` **empty** in production so requests stay same-origin through the proxy. Only fall back to setting `NEXT_PUBLIC_API_URL` directly if you deliberately switch away from the rewrite-proxy pattern, and if you do, make sure the backend's CORS allow-list actually includes your Vercel domain.
+- [ ] Trigger a fresh Vercel deploy after updating env vars — they don't apply until the next build
+- [ ] Set `FRONTEND_URL` in Render's env vars to your real Vercel domain
 - [ ] Add a `/health` endpoint and point a free uptime pinger (UptimeRobot / cron-job.org) at it every 10-14 min so Render's free tier doesn't sleep between visits
 
 ### 4. Backend environment variables to configure

@@ -57,7 +57,6 @@
         AGENTS.md
         CLAUDE.md
         eslint.config.mjs
-        netlify.toml
         next-env.d.ts
         next.config.ts
         nothing.txt

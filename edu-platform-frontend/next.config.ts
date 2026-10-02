@@ -1,12 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Required for Netlify's deployment adapter, but Vercel's own build
-  // pipeline does its own function tracing/packaging and conflicts with
-  // this — setting both breaks Vercel builds with a `.next/next-server.js
-  // .nft.json` ENOENT error. Vercel sets VERCEL=1 during its own builds,
-  // so only apply this on Netlify (or local builds) instead.
-  ...(process.env.VERCEL ? {} : { output: "standalone" as const }),
   images: {
     // Default optimizer quality (75) visibly washes out warm skin tones in
     // photos (chroma-subsampled WebP re-encode) — allow requesting higher.
