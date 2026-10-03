@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.storage import signed_url_for, storage_path_from_url
-from app.dependencies import require_admin, require_mentor, require_super_admin
+from app.dependencies import require_admin, require_mcq_author, require_mentor, require_super_admin
 from app.routers.payments import grant_test_series_subjects
 from app.schemas.admin import ManualEnrollRequest, MentorPermissionsUpdateRequest
 from app.schemas.mcq import BulkImportRequest
@@ -66,6 +66,46 @@ async def _mentor_has_permission(current_user: dict, permission_key: str, db: Cl
         if bool((row.get("permissions") or {}).get(permission_key, False)):
             return True
     return False
+
+
+# ─── MCQ Editor Scoping ──────────────────────────────────────────────────────
+# An mcq_editor authors MCQ papers and nothing else. require_mcq_author lets
+# them reach the paper endpoints at all; these helpers then confine them to
+# papers they created (mcq_papers.created_by), and to papers still in draft
+# for anything that changes them. Publishing stays admin-only.
+#
+# Only editor code paths touch created_by. Admin paths behave exactly as they
+# did before this role existed — so the backend works whether or not
+# mcq_editor_role_migration.sql has run yet (an editor can't be assigned
+# until it has, since the role CHECK constraint would reject them).
+
+def _is_mcq_editor(user: dict) -> bool:
+    return user.get("role") == "mcq_editor"
+
+
+def _load_editor_paper(set_id: str, user: dict, db: Client, *, require_draft: bool) -> dict:
+    """Return the paper if this editor owns it, else 404.
+
+    Someone else's paper answers 404, not 403, so an editor can't probe which
+    paper ids exist. Their own published paper answers 403 with a reason —
+    they already know it exists, and need to know why it's locked."""
+    try:
+        rows = db.table("mcq_papers").select("*").eq("id", set_id).execute().data or []
+    except PostgrestAPIError as e:
+        # 22P02: not a valid UUID, so it can't be any paper — a 404 like any
+        # other unknown id, rather than an unhandled 500.
+        if e.code == "22P02":
+            raise HTTPException(status_code=404, detail="MCQ set not found")
+        raise
+    paper = rows[0] if rows else None
+    if not paper or paper.get("created_by") != user["id"]:
+        raise HTTPException(status_code=404, detail="MCQ set not found")
+    if require_draft and paper.get("status") != "draft":
+        raise HTTPException(
+            status_code=403,
+            detail="This paper has been published, so it can no longer be edited. Ask an admin if it needs changes.",
+        )
+    return paper
 
 
 def _require_nonblank(body: dict, field: str, label: str, max_len: int = 200) -> str:
@@ -1362,11 +1402,13 @@ async def admin_list_sets(
     subject_code: Optional[str] = None,
     test_type: Optional[str] = None,
     status: Optional[str] = None,
-    admin: dict = Depends(require_admin),
+    author: dict = Depends(require_mcq_author),
     db: Client = Depends(get_db),
 ):
     try:
         query = db.table("mcq_papers").select("*")
+        if _is_mcq_editor(author):
+            query = query.eq("created_by", author["id"])
         if level:
             query = query.eq("level", level.upper())
         if group_name:
@@ -1400,6 +1442,14 @@ async def admin_list_sets(
                     if pid:
                         q_count_by_paper[pid] = q_count_by_paper.get(pid, 0) + 1
 
+        # Who submitted each paper — lets an admin find editor drafts to
+        # review. Admin-created papers have no created_by and resolve to None.
+        creator_ids = list({s.get("created_by") for s in sets_data if s.get("created_by")})
+        creator_email: Dict[str, str] = {}
+        if creator_ids and not _is_mcq_editor(author):
+            creators = db.table("profiles").select("id, email").in_("id", creator_ids).execute()
+            creator_email = {c["id"]: c.get("email", "") for c in (creators.data or [])}
+
         # Enriched output
         enriched = []
         for s in sets_data:
@@ -1429,6 +1479,8 @@ async def admin_list_sets(
                 "subject": s.get("subject", ""),
                 "sectionCount": len(sections),
                 "questionCount": q_count,
+                "createdBy": s.get("created_by"),
+                "createdByEmail": creator_email.get(s.get("created_by")),
             })
         return enriched
     except Exception as e:
@@ -1438,9 +1490,13 @@ async def admin_list_sets(
 @router.get("/mcq-sets/{set_id}")
 async def admin_get_set(
     set_id: str,
-    admin: dict = Depends(require_admin),
+    author: dict = Depends(require_mcq_author),
     db: Client = Depends(get_db),
 ):
+    if _is_mcq_editor(author):
+        # Viewing is allowed in any status (a published paper opens read-only);
+        # only edits and deletes are restricted to drafts.
+        _load_editor_paper(set_id, author, db, require_draft=False)
     mcq_set = db.table("mcq_papers").select("*").eq("id", set_id).single().execute()
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="MCQ set not found")
@@ -1507,10 +1563,16 @@ async def admin_get_set(
 @router.post("/mcq-sets")
 async def admin_upsert_set(
     body: dict,
-    admin: dict = Depends(require_admin),
+    author: dict = Depends(require_mcq_author),
     db: Client = Depends(get_db),
 ):
+    is_editor = _is_mcq_editor(author)
     set_id = body.get("id")
+    if is_editor and set_id:
+        # An editor may only overwrite a draft they own. This upsert deletes
+        # and re-inserts every section and question of the paper it's given,
+        # so without this check passing any other paper's id would wipe it.
+        _load_editor_paper(set_id, author, db, require_draft=True)
     # Generate a proper UUID if no id provided (DB column is UUID type)
     if not set_id or set_id == "":
         set_id = str(uuid.uuid4())
@@ -1565,6 +1627,16 @@ async def admin_upsert_set(
         "shuffle_questions": bool(body.get("shuffleQuestions") or body.get("shuffle_questions", False)),
         "shuffle_options": bool(body.get("shuffleOptions") or body.get("shuffle_options", False)),
     }
+    if is_editor:
+        # Editors submit drafts and an admin publishes. Override whatever
+        # status the body carries rather than relying on the UI having
+        # hidden the dropdown.
+        data["status"] = "draft"
+        # Stamp ownership on every editor save, not just the first. On an
+        # update this is the owner _load_editor_paper just verified, so it
+        # changes nothing — but it keeps ownership from depending on the
+        # upsert leaving an omitted column untouched.
+        data["created_by"] = author["id"]
 
     # 1. Upsert the Set Wrapper
     try:
@@ -1784,9 +1856,13 @@ async def admin_import_questions(
 @router.delete("/mcq-sets/{set_id}")
 async def admin_delete_set(
     set_id: str,
-    admin: dict = Depends(require_admin),
+    author: dict = Depends(require_mcq_author),
     db: Client = Depends(get_db),
 ):
+    if _is_mcq_editor(author):
+        # Outside the try below: that block swallows every exception and
+        # reports success, which would turn this refusal into a silent no-op.
+        _load_editor_paper(set_id, author, db, require_draft=True)
     try:
         existing_sections = db.table("exam_sections").select("id").eq("paper_id", set_id).execute()
         sec_ids = [s["id"] for s in (existing_sections.data or [])]

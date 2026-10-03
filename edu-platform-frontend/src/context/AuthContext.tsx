@@ -3,11 +3,12 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { apiFetch } from "@/lib/apiFetch";
+import type { Role } from "@/lib/roles";
 
 interface User {
   id: string;
   email: string;
-  role: "student" | "mentor" | "admin" | "super_admin";
+  role: Role;
   profileComplete: boolean;
 }
 

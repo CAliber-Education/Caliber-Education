@@ -50,6 +50,10 @@ def get_current_user(
 
 ADMIN_ROLES = {"admin", "super_admin"}
 MENTOR_ROLES = {"mentor", "admin", "super_admin"}
+# mcq_editor is deliberately NOT in ADMIN_ROLES or MENTOR_ROLES: it must
+# never pass require_admin/require_mentor, so every existing endpoint stays
+# closed to it by default. It is only let through by require_mcq_author.
+MCQ_AUTHOR_ROLES = {"mcq_editor", "admin", "super_admin"}
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -88,5 +92,22 @@ def require_mentor(current_user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Mentor access required",
+        )
+    return current_user
+
+
+def require_mcq_author(current_user: dict = Depends(get_current_user)) -> dict:
+    """Raises 403 unless the user may author MCQ papers: an mcq_editor, admin,
+    or super_admin.
+
+    This only answers "may this person use the paper-authoring endpoints at
+    all". An mcq_editor is additionally limited to their own draft papers —
+    that per-paper check lives with the endpoints in app/routers/admin.py,
+    since it needs the paper row.
+    """
+    if current_user.get("role") not in MCQ_AUTHOR_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MCQ authoring access required",
         )
     return current_user

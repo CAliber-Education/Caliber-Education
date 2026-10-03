@@ -5,6 +5,7 @@ import MCQStudio from "./components/MCQStudio";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { isStaffPanelRole, staffRoleLabel } from "@/lib/roles";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
   courses as initialCourses,
@@ -83,8 +84,6 @@ function ConfirmProvider({ children }: { children: React.ReactNode }) {
 }
 
 // ─── Root ────────────────────────────────────────────────────────────────
-const ADMIN_PANEL_ROLES = new Set(["admin", "super_admin", "mentor"]);
-
 export default function AdminPage() {
   const { user, isAuthenticated, isMounted } = useAuth();
   const router = useRouter();
@@ -110,7 +109,7 @@ export default function AdminPage() {
   // way to grant yourself access. Every admin API call is re-checked
   // server-side regardless, this is just what decides whether to render the
   // panel UI at all.
-  if (!ADMIN_PANEL_ROLES.has(user.role)) return <AccessDenied />;
+  if (!isStaffPanelRole(user.role)) return <AccessDenied />;
   return (
     <ConfirmProvider>
       <AdminDashboard />
@@ -134,7 +133,7 @@ function AccessDenied() {
   );
 }
 
-type AdminTab = "payments" | "users" | "mcq" | "series" | "courses" | "evaluations" | "coupons" | "affiliates";
+type AdminTab = "payments" | "users" | "mcq" | "mcq_v2" | "series" | "courses" | "evaluations" | "coupons" | "affiliates";
 
 interface PendingEvaluation {
   id: string;
@@ -432,11 +431,16 @@ function EvaluationsTab() {
 }
 
 function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<AdminTab>("payments");
-  const [series, setSeries] = useState<MCQSeries[]>([]);
-  const [stats, setStats] = useState({ users: 0, courses: 0, pendingPayments: 0 });
   const { user } = useAuth();
   const isMentorOnly = user?.role === "mentor";
+  // An MCQ editor gets the MCQ Hierarchy tab and nothing else — no users,
+  // payments, or stats. The backend enforces this independently; this just
+  // avoids rendering screens (and firing requests) that would only 403.
+  const isMcqEditor = user?.role === "mcq_editor";
+  const panelLabel = staffRoleLabel(user?.role);
+  const [activeTab, setActiveTab] = useState<AdminTab>(isMcqEditor ? "mcq_v2" : "payments");
+  const [series, setSeries] = useState<MCQSeries[]>([]);
+  const [stats, setStats] = useState({ users: 0, courses: 0, pendingPayments: 0 });
   const [mentorPerms, setMentorPerms] = useState<{ evaluate_papers: boolean; manage_sessions: boolean; manage_test_series: boolean } | null>(null);
 
   // The tab strip has 11 tabs but only ~3-4 fit on a phone screen at once,
@@ -473,6 +477,7 @@ function AdminDashboard() {
   }, [isMentorOnly]);
 
   useEffect(() => {
+    if (isMcqEditor) return;
     async function loadSeries() {
       try {
         const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -495,9 +500,10 @@ function AdminDashboard() {
       } catch (e) { }
     }
     loadSeries();
-  }, []);
+  }, [isMcqEditor]);
 
   useEffect(() => {
+    if (isMcqEditor) return;
     // Header stat cards previously showed hardcoded mock-data counts
     // (registeredUsers.length / initialCourses.length) regardless of what
     // was actually in the database — pull the real numbers instead.
@@ -528,7 +534,7 @@ function AdminDashboard() {
       } catch (e) { }
     }
     loadStats();
-  }, []);
+  }, [isMcqEditor]);
 
   const allTabs: { id: AdminTab | "mcq_v2"; label: string }[] = [
     { id: "payments", label: "Payments" },
@@ -553,7 +559,9 @@ function AdminDashboard() {
     sessions: "manage_sessions",
     evaluations: "evaluate_papers",
   };
-  const tabs = isMentorOnly
+  const tabs = isMcqEditor
+    ? allTabs.filter((t) => t.id === "mcq_v2")
+    : isMentorOnly
     ? allTabs.filter((t) => {
         const permKey = MENTOR_TAB_PERMISSION[t.id as string];
         return permKey ? !!mentorPerms?.[permKey] : false;
@@ -575,12 +583,13 @@ function AdminDashboard() {
               <Shield className="w-5 h-5 text-alert-coral" />
             </div>
             <div>
-              <p className="text-xs font-mono text-alert-coral uppercase tracking-widest">{isMentorOnly ? "Mentor View" : "Admin View"}</p>
-              <h1 className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper">{isMentorOnly ? "Mentor Dashboard" : "Admin Dashboard"}</h1>
+              <p className="text-xs font-mono text-alert-coral uppercase tracking-widest">{panelLabel} View</p>
+              <h1 className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper">{panelLabel} Dashboard</h1>
             </div>
           </div>
         </motion.div>
 
+        {!isMcqEditor && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             { icon: <Users className="w-4 h-4" />, value: stats.users.toString(), label: "Registered Users", color: "text-signal-emerald" },
@@ -596,6 +605,7 @@ function AdminDashboard() {
             </motion.div>
           ))}
         </div>
+        )}
 
         <div className="relative w-full sm:w-fit">
         <div ref={tabBarRef} className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>

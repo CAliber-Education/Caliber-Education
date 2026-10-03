@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Plus, Edit2, Trash2, ArrowLeft, Save, Upload, AlertCircle, FileText, Settings2, GripVertical, CheckCircle, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Toast, type ToastState } from "@/components/Toast";
+import { useAuth } from "@/context/AuthContext";
 
 // -- Models matching Backend V3 Schema --
 export interface Question {
@@ -50,6 +51,7 @@ export interface MCQPaper {
   case_scenarios?: CaseScenario[]; // we manage cases per paper here
   sectionCount?: number;
   questionCount?: number;
+  createdByEmail?: string | null; // set when an MCQ editor submitted it
 }
 
 // Master Data
@@ -68,6 +70,10 @@ const GROUP_LABELS: Record<string, string> = { GROUP_1: "Group I", GROUP_2: "Gro
 interface LiveSubject { code: string; name: string; level: string; group_name: string; }
 
 export default function MCQStudio({ series }: { series: any[] }) {
+  // An MCQ editor sees only their own papers (the backend filters the list)
+  // and can only change ones still in draft — an admin publishes them.
+  const { user } = useAuth();
+  const isMcqEditor = user?.role === "mcq_editor";
   const [papers, setPapers] = useState<MCQPaper[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingPaper, setEditingPaper] = useState<MCQPaper | null>(null);
@@ -155,7 +161,11 @@ export default function MCQStudio({ series }: { series: any[] }) {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-ink-navy dark:text-paper">MCQ Papers (CA Hierarchy)</h2>
-          <p className="text-sm text-slate dark:text-paper/60">Manage mock tests, question banks, and case scenarios.</p>
+          <p className="text-sm text-slate dark:text-paper/60">
+            {isMcqEditor
+              ? "Create MCQ papers in the hierarchy. They're saved as drafts — an admin reviews and publishes them."
+              : "Manage mock tests, question banks, and case scenarios."}
+          </p>
         </div>
         <button onClick={handleCreate} className="flex items-center gap-2 bg-signal-emerald text-white px-4 py-2 rounded-xl font-bold hover:shadow-lg transition-all">
           <Plus className="w-4 h-4" /> New Paper
@@ -182,7 +192,15 @@ export default function MCQStudio({ series }: { series: any[] }) {
                     {p.status}
                   </span>
                   <h3 className="font-bold text-ink-navy dark:text-paper mt-2">{p.title}</h3>
+                  {!isMcqEditor && p.createdByEmail && (
+                    <p className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold mt-1">Submitted by {p.createdByEmail}</p>
+                  )}
                 </div>
+                {isMcqEditor && p.status !== "draft" ? (
+                  <span className="text-[10px] font-semibold text-slate dark:text-paper/50 text-right leading-tight max-w-[7rem]">
+                    Published — locked. Ask an admin for changes.
+                  </span>
+                ) : (
                 <div className="flex gap-1">
                   <button onClick={() => setEditingPaper(p)} className="p-2 text-slate hover:text-signal-emerald hover:bg-signal-emerald/10 rounded-lg transition-colors">
                     <Edit2 className="w-4 h-4" />
@@ -191,6 +209,7 @@ export default function MCQStudio({ series }: { series: any[] }) {
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
+                )}
               </div>
 
               <div className="space-y-2 mb-6">
@@ -231,6 +250,8 @@ export default function MCQStudio({ series }: { series: any[] }) {
 }
 
 function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void }) {
+  const { user } = useAuth();
+  const isMcqEditor = user?.role === "mcq_editor";
   const [data, setData] = useState<MCQPaper>(paper);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"settings" | "cases" | "questions">("settings");
@@ -357,10 +378,14 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Status</label>
+                {isMcqEditor ? (
+                  <div className={`${inp} bg-line-gray-light/40 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 cursor-not-allowed`}>Draft</div>
+                ) : (
                 <select className={inp} value={data.status} onChange={e => setData({ ...data, status: e.target.value as any })}>
                   <option value="draft">Draft</option>
                   <option value="published">Published</option>
                 </select>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Test Type</label>
@@ -369,7 +394,11 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
                 </select>
               </div>
             </div>
-            {data.status === "draft" && (
+            {isMcqEditor ? (
+              <p className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-500/10 rounded-lg px-3 py-2">
+                Your papers are saved as drafts. Students won&apos;t see this until an admin reviews and publishes it — after that it&apos;s locked, so finish your changes first.
+              </p>
+            ) : data.status === "draft" && (
               <p className="text-[11px] font-semibold text-amber-600 bg-amber-500/10 rounded-lg px-3 py-2">
                 This paper is in Draft — it will NOT appear in the student catalog, &quot;My MCQs&quot;, or be attemptable until you set Status to Published.
               </p>

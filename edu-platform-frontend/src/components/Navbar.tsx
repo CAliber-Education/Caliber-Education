@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
 import { useTestGuard } from "@/context/TestGuardContext";
+import { isStaffPanelRole, staffRoleLabel } from "@/lib/roles";
 import { useEffect, useState } from "react";
 import { Sun, Moon, Menu, X, LogOut, LayoutDashboard, Shield, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -110,9 +111,9 @@ export function Navbar() {
 
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
-                {user && ["admin", "super_admin", "mentor"].includes(user.role) && (
+                {user && isStaffPanelRole(user.role) && (
                   <Link href="/admin" onClick={guardedClick("/admin")} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors">
-                    <Shield className="w-3.5 h-3.5" /> {user.role === "mentor" ? "Mentor" : "Admin"}
+                    <Shield className="w-3.5 h-3.5" /> {staffRoleLabel(user.role)}
                   </Link>
                 )}
                 <Link href="/profile" onClick={guardedClick("/profile")} title="My Profile"
@@ -178,9 +179,9 @@ export function Navbar() {
                       </span>
                       My Profile
                     </Link>
-                    {user && ["admin", "super_admin", "mentor"].includes(user.role) && (
+                    {user && isStaffPanelRole(user.role) && (
                       <Link href="/admin" onClick={(e) => { guardedClick("/admin")(e); if (!e.defaultPrevented) setMenuOpen(false); }} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-alert-coral hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
-                        <Shield className="w-3.5 h-3.5" /> {user.role === "mentor" ? "Mentor" : "Admin"}
+                        <Shield className="w-3.5 h-3.5" /> {staffRoleLabel(user.role)}
                       </Link>
                     )}
                     <button onClick={() => { guardedLogout(); setMenuOpen(false); }} className="block w-full text-left px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign Out</button>

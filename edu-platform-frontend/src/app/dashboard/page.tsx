@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { isStaffPanelRole } from "@/lib/roles";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
   BookOpen,
@@ -301,7 +302,7 @@ export default function DashboardPage() {
     );
   }
 
-  const isAdmin = user.role === "admin" || user.role === "super_admin" || user.role === "mentor";
+  const isAdmin = isStaffPanelRole(user.role);
 
   const userPurchasedCourses = dbCourses.filter((c: any) => purchasedCourseIds.includes(c.id));
   const totalMyCourses = userPurchasedCourses.length;
@@ -361,7 +362,7 @@ export default function DashboardPage() {
               <div className="flex flex-col items-start sm:items-end gap-2">
                 <div className="flex items-center gap-3 px-4 py-2 rounded-lg border bg-alert-coral/5 border-alert-coral/25">
                   <Shield className="w-4 h-4 text-alert-coral" />
-                  <span className="text-xs font-semibold text-alert-coral capitalize">{user.role.replace("_", " ")}</span>
+                  <span className="text-xs font-semibold text-alert-coral capitalize">{user.role === "mcq_editor" ? "MCQ Editor" : user.role.replace("_", " ")}</span>
                 </div>
                 <Link
                   href="/admin"
