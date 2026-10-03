@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 def _seed_paper(fake_db, paper_id="paper-1", duration_minutes=45, locked=False):
     fake_db.seed("mcq_papers", [{
-        "id": paper_id, "title": "Attempt Test", "level": "FINAL",
+        "id": paper_id, "title": "Attempt Test", "level": "FINAL", "status": "published",
         "subject_code": "FR", "is_locked": locked, "shuffle_questions": True,
         "duration_minutes": duration_minutes,
     }])

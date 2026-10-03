@@ -13,6 +13,7 @@ def _paper_payload(questions):
         "subjectCode": "FR",
         "level": "FINAL",
         "groupName": "GROUP_1",
+        "status": "published",
         "sections": [{"title": "Section A", "questions": questions}],
     }
 

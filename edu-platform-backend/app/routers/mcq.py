@@ -285,8 +285,10 @@ async def get_series(series_id: str, db: Client = Depends(get_db)):
         "price": 0
     }
 
-    # Fetch all papers belonging to this subject
-    papers = db.table("mcq_papers").select("*").eq("subject_code", series_id).execute()
+    # Published papers only. This endpoint is public, and listing a draft here
+    # also handed every logged-in student an "Attempt Set" button for it —
+    # drafts include MCQ editors' unreviewed work, so they must not surface.
+    papers = db.table("mcq_papers").select("*").eq("subject_code", series_id).eq("status", "published").execute()
     paper_rows = papers.data or []
     paper_ids = [p["id"] for p in paper_rows]
 
@@ -403,11 +405,30 @@ async def get_mcq_catalog(
 
 # ─── Quiz Sets / Attempts / Analytics ────────────────────────────────────────
 
+# Roles that may open any paper regardless of purchase or publish status.
+# mcq_editor is deliberately absent: editors author in the admin studio and
+# are treated as students here.
+_PREVIEW_ROLES = {"admin", "super_admin", "mentor"}
+
+
+def _hide_unpublished(current_user: dict, paper: dict) -> None:
+    """404 an unpublished (draft/archived) paper for anyone outside staff.
+
+    The purchase check below only runs for papers flagged is_locked, so
+    without this an unlocked draft was open to every logged-in user. 404
+    rather than 403 so a draft's existence isn't confirmed. Submitting needs
+    an attempt started on this same paper, so gating load and start covers
+    submit too — while still letting an attempt begun on a published paper
+    finish if that paper is archived mid-way."""
+    if paper.get("status") != "published" and current_user.get("role") not in _PREVIEW_ROLES:
+        raise HTTPException(status_code=404, detail="Quiz set not found")
+
+
 async def _has_mcq_paper_access(current_user: dict, paper: dict, db: Client) -> bool:
     """Admins/mentors can always preview. Students need an active mcq_enrollments
     row for the paper's subject (matched via mcq_subjects.code + level -> its
     storefront id, which is what mcq_enrollments.subject_code stores)."""
-    if current_user.get("role") in {"admin", "super_admin", "mentor"}:
+    if current_user.get("role") in _PREVIEW_ROLES:
         return True
 
     subject_code = (paper.get("subject_code") or "").strip()
@@ -471,6 +492,7 @@ async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), 
     mcq_set = db.table("mcq_papers").select("*").eq("id", set_id).single().execute()
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="Quiz set not found")
+    _hide_unpublished(current_user, mcq_set.data)
 
     if mcq_set.data.get("is_locked"):
         if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
@@ -582,6 +604,7 @@ async def start_attempt(
     mcq_set = db.table("mcq_papers").select("*").eq("id", set_id).single().execute()
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="Quiz set not found")
+    _hide_unpublished(current_user, mcq_set.data)
     if mcq_set.data.get("is_locked"):
         if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
             raise HTTPException(status_code=403, detail="Purchase this subject to access this test")

@@ -19,7 +19,7 @@ def _seed_attempt(fake_db, attempt_id, user_id, set_id):
 
 def _seed_locked_paper(fake_db, paper_id="paper-locked"):
     fake_db.seed("mcq_papers", [{
-        "id": paper_id, "title": "Locked Paper", "level": "FINAL",
+        "id": paper_id, "title": "Locked Paper", "level": "FINAL", "status": "published",
         "subject_code": "FR", "is_locked": True, "shuffle_questions": False,
         "passing_marks": 40.0,
     }])

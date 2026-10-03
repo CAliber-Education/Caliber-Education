@@ -7,7 +7,7 @@ row order — the exact thing this fix removes a dependency on).
 
 def _seed_unordered_paper(fake_db, paper_id="paper-1", section_id="sec-1", locked=False):
     fake_db.seed("mcq_papers", [{
-        "id": paper_id, "title": "Ordering Test", "level": "FINAL",
+        "id": paper_id, "title": "Ordering Test", "level": "FINAL", "status": "published",
         "subject_code": "FR", "is_locked": locked, "shuffle_questions": False,
     }])
     fake_db.seed("exam_sections", [{"id": section_id, "paper_id": paper_id, "title": "Section A", "order_index": 0}])
@@ -49,7 +49,7 @@ def test_get_quiz_orders_questions_by_order_index(make_client, fake_db, student_
 
 def test_get_quiz_orders_sections_by_order_index(make_client, fake_db, student_user):
     fake_db.seed("mcq_papers", [{
-        "id": "paper-2", "title": "Section Ordering Test", "level": "FINAL",
+        "id": "paper-2", "title": "Section Ordering Test", "level": "FINAL", "status": "published",
         "subject_code": "FR", "is_locked": False, "shuffle_questions": False,
     }])
     fake_db.seed("exam_sections", [
