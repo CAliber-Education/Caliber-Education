@@ -2,10 +2,11 @@
 
 Covers the three things the role must guarantee:
   1. Isolation — every non-MCQ admin endpoint still refuses it (users,
-     payments, publishing, self-promotion, mentor-only screens).
-  2. Ownership — it only ever sees/edits/deletes papers it created, and only
-     while they're drafts. Someone else's paper id must never let it read,
-     overwrite, or wipe that paper.
+     payments, self-promotion, mentor-only screens).
+  2. Ownership — it only ever sees/edits/deletes papers it created. Within
+     those it needs no admin: it publishes, edits, and deletes on its own.
+     Someone else's paper id must never let it read, overwrite, or wipe
+     that paper.
   3. Admins are unaffected, and the role is only ever granted directly in
      Supabase — the admin API refuses to set it.
 
@@ -113,10 +114,12 @@ def test_editor_is_refused_everything_outside_mcq_authoring(make_client, seeded,
     assert res.status_code == 403, f"{method.upper()} {path} -> {res.status_code}"
 
 
-def test_editor_cannot_publish(make_client, seeded):
-    res = make_client(EDITOR).patch("/api/admin/mcq-sets/own-draft/status", json={"status": "published"})
+def test_editor_cannot_use_the_admin_status_endpoint(make_client, seeded):
+    """Editors publish through save, which checks ownership. This endpoint
+    flips any paper by id with no ownership check, so it stays admin-only."""
+    res = make_client(EDITOR).patch("/api/admin/mcq-sets/other-editor-draft/status", json={"status": "published"})
     assert res.status_code == 403
-    assert _paper_row(seeded, "own-draft")["status"] == "draft"
+    assert _paper_row(seeded, "other-editor-draft")["status"] == "draft"
 
 
 def test_editor_cannot_promote_themselves(make_client, seeded):
@@ -167,10 +170,25 @@ def test_editor_create_is_owned_by_them(make_client, seeded):
     assert row["status"] == "draft"
 
 
-def test_editor_create_is_forced_to_draft_even_if_body_says_published(make_client, seeded):
+def test_editor_can_publish_a_new_paper_without_an_admin(make_client, seeded):
     res = make_client(EDITOR).post("/api/admin/mcq-sets", json=_payload(status="published"))
     assert res.status_code == 200
-    assert _paper_row(seeded, res.json()["id"])["status"] == "draft"
+    row = _paper_row(seeded, res.json()["id"])
+    assert row["status"] == "published"
+    assert row["created_by"] == EDITOR["id"]
+
+
+def test_editor_published_paper_reaches_students_with_no_admin_step(make_client, seeded):
+    paper_id = make_client(EDITOR).post("/api/admin/mcq-sets", json=_payload(status="published")).json()["id"]
+    assert make_client(STUDENT).get(f"/api/quizzes/{paper_id}").status_code == 200
+
+
+def test_editor_can_publish_and_unpublish_an_existing_paper(make_client, seeded):
+    client = make_client(EDITOR)
+    assert client.post("/api/admin/mcq-sets", json=_payload(id="own-draft", status="published")).status_code == 200
+    assert _paper_row(seeded, "own-draft")["status"] == "published"
+    assert client.post("/api/admin/mcq-sets", json=_payload(id="own-draft", status="draft")).status_code == 200
+    assert _paper_row(seeded, "own-draft")["status"] == "draft"
 
 
 # ─── 2c. Editing ─────────────────────────────────────────────────────────────
@@ -198,11 +216,13 @@ def test_editor_cannot_overwrite_someone_elses_paper(make_client, seeded, target
     assert _question_contents(seeded, target) == [f"original question of {target}"]
 
 
-def test_editor_cannot_edit_own_published_paper(make_client, seeded):
-    res = make_client(EDITOR).post("/api/admin/mcq-sets", json=_payload(id="own-published", title="Sneaky edit"))
-    assert res.status_code == 403
-    assert _paper_row(seeded, "own-published")["title"] == "Paper own-published"
-    assert _question_contents(seeded, "own-published") == ["original question of own-published"]
+def test_editor_can_edit_own_published_paper(make_client, seeded):
+    res = make_client(EDITOR).post("/api/admin/mcq-sets", json=_payload(id="own-published", title="Fixed typo", status="published"))
+    assert res.status_code == 200
+    row = _paper_row(seeded, "own-published")
+    assert row["title"] == "Fixed typo"
+    assert row["status"] == "published"
+    assert row["created_by"] == EDITOR["id"]
 
 
 def test_editor_cannot_plant_a_paper_under_a_chosen_id(make_client, seeded):
@@ -227,20 +247,17 @@ def test_editor_cannot_view_someone_elses_paper(make_client, seeded, target):
 
 # ─── 2e. Deleting ────────────────────────────────────────────────────────────
 
-def test_editor_can_delete_own_draft(make_client, seeded):
-    res = make_client(EDITOR).delete("/api/admin/mcq-sets/own-draft")
-    assert res.status_code == 200
-    assert _paper_row(seeded, "own-draft") is None
-
-
-@pytest.mark.parametrize("target,expected", [
-    ("other-editor-draft", 404),
-    ("admin-paper", 404),
-    ("own-published", 403),
-])
-def test_editor_cannot_delete_papers_outside_their_drafts(make_client, seeded, target, expected):
+@pytest.mark.parametrize("target", ["own-draft", "own-published"])
+def test_editor_can_delete_own_paper(make_client, seeded, target):
     res = make_client(EDITOR).delete(f"/api/admin/mcq-sets/{target}")
-    assert res.status_code == expected
+    assert res.status_code == 200
+    assert _paper_row(seeded, target) is None
+
+
+@pytest.mark.parametrize("target", ["other-editor-draft", "admin-paper"])
+def test_editor_cannot_delete_someone_elses_paper(make_client, seeded, target):
+    res = make_client(EDITOR).delete(f"/api/admin/mcq-sets/{target}")
+    assert res.status_code == 404
     assert _paper_row(seeded, target) is not None
     assert _question_contents(seeded, target) == [f"original question of {target}"]
 
@@ -285,5 +302,5 @@ def test_editor_gets_404_not_500_for_a_malformed_paper_id():
             raise APIError({"code": "22P02", "message": "invalid input syntax for type uuid"})
 
     with pytest.raises(HTTPException) as exc:
-        _load_editor_paper("not-a-uuid", EDITOR, _RejectsNonUuid(), require_draft=True)
+        _load_editor_paper("not-a-uuid", EDITOR, _RejectsNonUuid())
     assert exc.value.status_code == 404

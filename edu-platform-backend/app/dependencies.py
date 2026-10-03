@@ -101,7 +101,7 @@ def require_mcq_author(current_user: dict = Depends(get_current_user)) -> dict:
     or super_admin.
 
     This only answers "may this person use the paper-authoring endpoints at
-    all". An mcq_editor is additionally limited to their own draft papers —
+    all". An mcq_editor is additionally limited to papers they created —
     that per-paper check lives with the endpoints in app/routers/admin.py,
     since it needs the paper row.
     """

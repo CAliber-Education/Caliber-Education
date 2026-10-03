@@ -70,9 +70,10 @@ async def _mentor_has_permission(current_user: dict, permission_key: str, db: Cl
 
 # ─── MCQ Editor Scoping ──────────────────────────────────────────────────────
 # An mcq_editor authors MCQ papers and nothing else. require_mcq_author lets
-# them reach the paper endpoints at all; these helpers then confine them to
-# papers they created (mcq_papers.created_by), and to papers still in draft
-# for anything that changes them. Publishing stays admin-only.
+# them reach the paper endpoints at all; _load_editor_paper then confines them
+# to papers they created (mcq_papers.created_by). Within their own papers they
+# work without an admin: they set Draft/Published themselves, and can edit or
+# delete at any time.
 #
 # Only editor code paths touch created_by. Admin paths behave exactly as they
 # did before this role existed — so the backend works whether or not
@@ -83,12 +84,11 @@ def _is_mcq_editor(user: dict) -> bool:
     return user.get("role") == "mcq_editor"
 
 
-def _load_editor_paper(set_id: str, user: dict, db: Client, *, require_draft: bool) -> dict:
+def _load_editor_paper(set_id: str, user: dict, db: Client) -> dict:
     """Return the paper if this editor owns it, else 404.
 
     Someone else's paper answers 404, not 403, so an editor can't probe which
-    paper ids exist. Their own published paper answers 403 with a reason —
-    they already know it exists, and need to know why it's locked."""
+    paper ids exist."""
     try:
         rows = db.table("mcq_papers").select("*").eq("id", set_id).execute().data or []
     except PostgrestAPIError as e:
@@ -100,11 +100,6 @@ def _load_editor_paper(set_id: str, user: dict, db: Client, *, require_draft: bo
     paper = rows[0] if rows else None
     if not paper or paper.get("created_by") != user["id"]:
         raise HTTPException(status_code=404, detail="MCQ set not found")
-    if require_draft and paper.get("status") != "draft":
-        raise HTTPException(
-            status_code=403,
-            detail="This paper has been published, so it can no longer be edited. Ask an admin if it needs changes.",
-        )
     return paper
 
 
@@ -1494,9 +1489,7 @@ async def admin_get_set(
     db: Client = Depends(get_db),
 ):
     if _is_mcq_editor(author):
-        # Viewing is allowed in any status (a published paper opens read-only);
-        # only edits and deletes are restricted to drafts.
-        _load_editor_paper(set_id, author, db, require_draft=False)
+        _load_editor_paper(set_id, author, db)
     mcq_set = db.table("mcq_papers").select("*").eq("id", set_id).single().execute()
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="MCQ set not found")
@@ -1569,10 +1562,10 @@ async def admin_upsert_set(
     is_editor = _is_mcq_editor(author)
     set_id = body.get("id")
     if is_editor and set_id:
-        # An editor may only overwrite a draft they own. This upsert deletes
+        # An editor may only overwrite a paper they own. This upsert deletes
         # and re-inserts every section and question of the paper it's given,
         # so without this check passing any other paper's id would wipe it.
-        _load_editor_paper(set_id, author, db, require_draft=True)
+        _load_editor_paper(set_id, author, db)
     # Generate a proper UUID if no id provided (DB column is UUID type)
     if not set_id or set_id == "":
         set_id = str(uuid.uuid4())
@@ -1628,10 +1621,6 @@ async def admin_upsert_set(
         "shuffle_options": bool(body.get("shuffleOptions") or body.get("shuffle_options", False)),
     }
     if is_editor:
-        # Editors submit drafts and an admin publishes. Override whatever
-        # status the body carries rather than relying on the UI having
-        # hidden the dropdown.
-        data["status"] = "draft"
         # Stamp ownership on every editor save, not just the first. On an
         # update this is the owner _load_editor_paper just verified, so it
         # changes nothing — but it keeps ownership from depending on the
@@ -1862,7 +1851,7 @@ async def admin_delete_set(
     if _is_mcq_editor(author):
         # Outside the try below: that block swallows every exception and
         # reports success, which would turn this refusal into a silent no-op.
-        _load_editor_paper(set_id, author, db, require_draft=True)
+        _load_editor_paper(set_id, author, db)
     try:
         existing_sections = db.table("exam_sections").select("id").eq("paper_id", set_id).execute()
         sec_ids = [s["id"] for s in (existing_sections.data or [])]
