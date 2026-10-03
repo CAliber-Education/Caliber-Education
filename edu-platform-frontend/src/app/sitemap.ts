@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
 
-const STATIC_ROUTES = ["", "/about", "/courses", "/mcq", "/test-series", "/terms"];
+const STATIC_ROUTES = ["", "/about", "/courses", "/mcq", "/test-series", "/free-resources", "/terms"];
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticEntries: MetadataRoute.Sitemap = STATIC_ROUTES.map((path) => ({

@@ -2,6 +2,7 @@
 
 import React, { Fragment, useEffect, useState, useRef, createContext, useContext } from "react";
 import MCQStudio from "./components/MCQStudio";
+import FreeResourcesAdmin from "./components/FreeResourcesAdmin";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
@@ -133,7 +134,7 @@ function AccessDenied() {
   );
 }
 
-type AdminTab = "payments" | "users" | "mcq" | "mcq_v2" | "series" | "courses" | "evaluations" | "coupons" | "affiliates";
+type AdminTab = "payments" | "users" | "mcq" | "mcq_v2" | "series" | "courses" | "evaluations" | "coupons" | "affiliates" | "free_resources";
 
 interface PendingEvaluation {
   id: string;
@@ -543,6 +544,7 @@ function AdminDashboard() {
     { id: "affiliates", label: "Affiliates" },
     { id: "mcq_v2", label: "MCQ Hierarchy" },
     { id: "test_series" as any, label: "Test Series" },
+    { id: "free_resources", label: "Free Resources" },
     { id: "sessions" as any, label: "1:1 Sessions" },
     { id: "courses", label: "Courses" },
     { id: "evaluations", label: "Evaluations" },
@@ -607,8 +609,12 @@ function AdminDashboard() {
         </div>
         )}
 
-        <div className="relative w-full sm:w-fit">
-        <div ref={tabBarRef} className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
+        {/* From sm up the tabs wrap onto a second row rather than overflowing:
+            at w-fit the strip grows with its content, so once the tabs outgrew
+            the column it pushed the whole page wider than the screen. Phones
+            keep the single swipeable row with its scroll hint below. */}
+        <div className="relative w-full sm:w-fit sm:max-w-full">
+        <div ref={tabBarRef} className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit sm:max-w-full sm:flex-wrap overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setActiveTab(t.id as AdminTab)}
               className={`flex-shrink-0 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${(activeTab as string) === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
@@ -640,6 +646,7 @@ function AdminDashboard() {
           {(activeTab as string) === "series" && <SeriesTab key="series" items={series} setItems={setSeries} />}
           {(activeTab as string) === "courses" && <CoursesTab key="courses" series={series} />}
           {(activeTab as string) === "test_series" && <TestSeriesTab key="test_series" />}
+          {(activeTab as string) === "free_resources" && <FreeResourcesAdmin key="free_resources" />}
           {(activeTab as string) === "sessions" && <SessionsTab key="sessions" />}
           {(activeTab as string) === "evaluations" && <EvaluationsTab key="evaluations" />}
           {(activeTab as string) === "mentors" && <MentorsTab key="mentors" />}

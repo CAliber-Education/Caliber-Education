@@ -16,6 +16,7 @@ const navLinks = [
   { href: "/about", label: "Team" },
   { href: "/courses", label: "Courses" },
   { href: "/test-series", label: "Test Series" },
+  { href: "/free-resources", label: "Free Resources" },
 ];
 
 export function Navbar() {
