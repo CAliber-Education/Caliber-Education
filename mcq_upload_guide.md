@@ -34,10 +34,11 @@ The manual editor has been entirely redesigned so that Case Scenarios and Normal
 
 Maths is stored as plain text with symbols (e.g. `P(Ā∩B̄)`, `log₄(x² + x)`, `(2a + b)/(a + 2b)`), so it shows the same in the editor and for students.
 
-What it reads: sections, questions, options, answers (printed under each question, or from an answer key anywhere in the paper or a separate PDF), explanations, marks, and case studies. For a new, empty paper it also fills in the **title, duration, total marks and subject** on Hierarchy & Settings.
+What it reads: sections, questions, options, answers (printed under each question, or from an answer key anywhere in the paper or a separate PDF), explanations (printed under the question, or in the answer key / "Answers & Explanations" section — matched by question number), marks, and case studies. For a new, empty paper it also fills in the **title, duration, total marks and subject** on Hierarchy & Settings.
 
 What to check:
 - Questions **highlighted in yellow** need a look — e.g. "No answer found in the file", or fewer than 4 options found. **Save stays blocked until every question has an answer.**
+- Explanations are only copied from the paper, never written by the AI. A question with no printed explanation is left blank.
 - Answers are **never guessed**: if the paper doesn't print one, the question is left unanswered and highlighted for you — even if the AI tried to supply one ("The AI suggested an answer that isn't printed in the paper").
 
 ---
@@ -49,7 +50,7 @@ What to check:
 
 If the paper already has questions, you're asked before the new ones are added after them. Missing or unclear answers are highlighted, never set to option A.
 
-Accepted layouts: the format below (a list of sections), the same wrapped as `{"sections": [...]}`, or a plain list of questions. Answers can be `"correct_option": 0` (0 = a, 1 = b, …) or a letter such as `"answer": "b"`. Option labels like `(a)` and question numbers like `Q1.` are removed automatically.
+Accepted layouts: the format below (a list of sections), the same wrapped as `{"sections": [...]}`, or a plain list of questions. Answers can be `"correct_option": 0` (0 = a, 1 = b, …) or a letter such as `"answer": "b"`. You can also add an `"answer_key"` list next to the sections, e.g. `{"sections": [...], "answer_key": [{"number": 1, "answer": "b", "explanation": "..."}]}`. Option labels like `(a)` and question numbers like `Q1.` are removed automatically.
 
 ### JSON format
 

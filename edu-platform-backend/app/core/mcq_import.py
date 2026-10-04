@@ -214,7 +214,7 @@ _PROMPT_BODY = """Return ONE JSON object and nothing else:
       "marks": number or null,
       "negative_marks": number or null
   } ] } ],
-  "answer_key": [ { "number": question number, "answer": "a" | "b" | "c" | "d" } ],
+  "answer_key": [ { "number": question number, "answer": "a" | "b" | "c" | "d", "explanation": the explanation, working or hint printed with that entry, or "" } ],
   "continuation": null, or — only when this part BEGINS with the rest of a question or case passage from the previous part —
     { "number": that question's number, "content": more of its question text or "", "options": its remaining options (without labels),
       "answer_line": its answer as printed or null, "explanation": its explanation or "", "case_narrative": more of the case passage or "" }
@@ -222,6 +222,7 @@ _PROMPT_BODY = """Return ONE JSON object and nothing else:
 Rules:
 - Include every question in this part, in order. Never skip, merge or invent questions.
 - Answers come ONLY from what is printed. You are copying the paper, not sitting it: never solve a question or fill in an answer you know, even an obvious one. An answer printed with its question goes in answer_line and correct_option. Answers listed separately (an answer key or answer table) go in answer_key: copy EVERY entry of the key exactly as printed, including entries for question numbers that are not in this part — those questions are in another part of the paper.
+- Explanations: copy them only from the paper, never write your own. One printed with its question goes in that question's "explanation". One printed in the answer key or a solutions/hints section goes in that entry's "explanation" — copy it in full, including any working.
 - If this part is only an answer key, return an empty "sections" list and fill "answer_key".
 - Copy question and option text exactly, keeping symbols such as ₹ and %. Ignore page headers, footers and page numbers.
 - A case study is a passage followed by its questions. Every question after a case passage belongs to that case — including questions after a page break — until the next case passage, a new section heading, or the answer key. All of them are type "case"; only the first carries case_narrative. A question that continues a case whose passage is not in this part is also type "case".
@@ -550,6 +551,22 @@ def _answer_key(part: Any) -> Dict[int, str]:
     return key
 
 
+def _key_explanations(part: Any) -> Dict[int, str]:
+    """Explanations printed in an answer key / solutions section, by number.
+    An entry may have one without a usable answer letter (e.g. the answer is
+    already printed with the question), so these are read separately."""
+    if not isinstance(part, dict) or not isinstance(part.get("answer_key"), list):
+        return {}
+    out: Dict[int, str] = {}
+    for e in part["answer_key"]:
+        if isinstance(e, dict):
+            n = _num(e.get("number", e.get("question")))
+            text = _text(_first(e, "explanation", "solution", "reason"))
+            if n is not None and text:
+                out[int(n)] = text
+    return out
+
+
 def _clean_question(q: dict) -> Optional[dict]:
     content = _NUMBER_PREFIX.sub("", _text(_first(q, "content", "question", "text", "question_text")) or "").strip()
     options = _options(q)
@@ -625,6 +642,7 @@ def normalize_import(parts: List[Any]) -> dict:
     meta: Dict[str, Any] = {"title": None, "level": None, "subject": None, "duration_minutes": None, "total_marks": None}
     sections: List[dict] = []
     key: Dict[int, str] = {}
+    key_explanations: Dict[int, str] = {}
 
     for part in parts:
         part_sections, part_meta = _sections_of(part)
@@ -642,6 +660,7 @@ def normalize_import(parts: List[Any]) -> dict:
         if meta["level"] is None and isinstance(part_meta, dict):
             meta["level"] = _level(part_meta.get("level"))
         key.update(_answer_key(part))
+        key_explanations.update(_key_explanations(part))
         _apply_continuation(part.get("continuation") if isinstance(part, dict) else None, sections)
 
         for i, s in enumerate(part_sections):
@@ -672,30 +691,34 @@ def normalize_import(parts: List[Any]) -> dict:
             if q[field] is None:
                 q[field] = prevailing
 
-    # Answers listed separately (an answer key / answer table), by number.
+    # Answers and explanations listed separately (an answer key, answer table
+    # or solutions section), by number. Never overrides what's printed with
+    # the question itself.
     issues: List[str] = []
-    if key:
+    key_numbers = sorted(set(key) | set(key_explanations))
+    if key_numbers:
         numbers = [q["_number"] for q in all_qs]
         unique = all(n is not None for n in numbers) and len(set(numbers)) == len(numbers)
+        targets: Dict[int, dict] = {}
         if unique:
             by_number = {q["_number"]: q for q in all_qs}
-            for n, letter in key.items():
-                q = by_number.get(n)
-                if q is None:
+            for n in key_numbers:
+                if n in by_number:
+                    targets[n] = by_number[n]
+                else:
                     issues.append(f"The answer key lists question {n}, which wasn't found.")
-                elif q["correct_option"] is None:
-                    idx = _letter_index(letter, q["options"])
-                    if idx is not None and idx < len(q["options"]):
-                        q["correct_option"] = idx
-        elif len(key) == len(all_qs):
+        elif len(key_numbers) == len(all_qs):
             # Numbering restarts per section, but the key covers every question: apply in order.
-            for q, n in zip(all_qs, sorted(key)):
-                if q["correct_option"] is None:
-                    idx = _letter_index(key[n], q["options"])
-                    if idx is not None and idx < len(q["options"]):
-                        q["correct_option"] = idx
+            targets = dict(zip(key_numbers, all_qs))
         else:
             issues.append("The answer key couldn't be matched to the questions (question numbers repeat) — pick answers by hand.")
+        for n, q in targets.items():
+            if n in key and q["correct_option"] is None:
+                idx = _letter_index(key[n], q["options"])
+                if idx is not None and idx < len(q["options"]):
+                    q["correct_option"] = idx
+            if not q["explanation"] and key_explanations.get(n):
+                q["explanation"] = key_explanations[n]
 
     # The editor groups a case study as a run of consecutive "case" questions
     # within a section, so two case studies back to back would merge into one

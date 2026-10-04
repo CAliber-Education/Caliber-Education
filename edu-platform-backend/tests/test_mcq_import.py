@@ -244,6 +244,42 @@ def test_answer_key_entry_for_a_missing_question_is_reported():
     assert any("question 9" in i for i in r["issues"])
 
 
+def test_explanations_in_the_answer_key_fill_their_questions():
+    parts = [
+        part([q(number=1), q(number=2)]),
+        part([], key=[{"number": 1, "answer": "b", "explanation": "2 + 2 = 4."},
+                      {"number": 2, "answer": "b", "explanation": ""}]),
+    ]
+    qs = normalize_import(parts)["sections"][0]["questions"]
+    assert qs[0]["explanation"] == "2 + 2 = 4." and qs[0]["correct_option"] == 1
+    assert qs[1]["explanation"] == ""
+
+
+def test_key_explanation_does_not_replace_one_printed_with_the_question():
+    r = normalize_import([part([q(number=1, explanation="Printed with the question.")],
+                               key=[{"number": 1, "answer": "b", "explanation": "From the key."}])])
+    assert only_q(r)["explanation"] == "Printed with the question."
+
+
+def test_solutions_section_explanation_without_a_letter_still_fills_it():
+    # Answer printed with the question; the solutions section only explains it.
+    r = normalize_import([part([q(number=1, correct_option=1)], key=[{"number": 1, "explanation": "Add them."}])])
+    assert only_q(r)["correct_option"] == 1 and only_q(r)["explanation"] == "Add them."
+
+
+def test_key_explanations_follow_restarted_numbering_in_order():
+    parts = [part([q(number=1)], title="Part A"), part([q(number=1)], title="Part B"),
+             part([], key=[{"number": 1, "answer": "a", "explanation": "first"},
+                           {"number": 2, "answer": "b", "explanation": "second"}])]
+    qs = [x for s in normalize_import(parts)["sections"] for x in s["questions"]]
+    assert [x["explanation"] for x in qs] == ["first", "second"]
+
+
+def test_prompt_asks_for_key_explanations_and_forbids_writing_them():
+    assert '"explanation": the explanation, working or hint printed with that entry' in TEXT_SYSTEM_PROMPT
+    assert "never write your own" in IMAGE_SYSTEM_PROMPT
+
+
 def test_restarted_numbering_with_a_complete_key_is_applied_in_order():
     parts = [part([q(number=1), q(number=2)], title="Part A"), part([q(number=1)], title="Part B"),
              part([], key={"1": "b", "2": "c", "3": "d"})]

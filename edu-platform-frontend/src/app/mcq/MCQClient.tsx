@@ -500,7 +500,7 @@ export default function MCQClient({
                       >
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
-                            {b.badge || mcqGroupLabel(b.groupName)}
+                            {mcqGroupLabel(b.badge || b.groupName)}
                           </span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">{subCount} Subjects</span>
                         </div>
