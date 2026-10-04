@@ -75,6 +75,23 @@ export interface MCQCartCalculation {
   upsellRecommendation?: SmartUpsellData;
 }
 
+// Display name for a stored group code. Foundation has no groups ("NONE"),
+// so its subjects show no group chip and its bundle reads "CA Foundation".
+export function mcqGroupLabel(groupName: string): string {
+  switch (groupName) {
+    case "GROUP_1": return "Group I";
+    case "GROUP_2": return "Group II";
+    case "BOTH": return "Both Groups";
+    case "NONE":
+    case "All": return "CA Foundation";
+    default: return groupName;
+  }
+}
+
+export function hasGroupChip(groupName: string): boolean {
+  return groupName !== "All" && groupName !== "NONE" && groupName !== "";
+}
+
 export function normalizeMCQSubject(raw: any): MCQSubject {
   return {
     id: raw.id || "",
@@ -175,7 +192,7 @@ export function calculateMCQCartPrice(
           bundlePrice: bPrice,
           originalSum: fullBaseSum,
           savings: Math.max(0, fullBaseSum - bPrice),
-          message: `Get all ${group} subjects for just ₹${bPrice}${duration === "1_month" ? "/mo" : ""} (Normally ₹${fullBaseSum})`,
+          message: `Get all ${mcqGroupLabel(group)} subjects for just ₹${bPrice}${duration === "1_month" ? "/mo" : ""} (Normally ₹${fullBaseSum})`,
         };
       }
     } else if (level !== "FOUNDATION" && selectedSet.size < levelSubjects.length) {

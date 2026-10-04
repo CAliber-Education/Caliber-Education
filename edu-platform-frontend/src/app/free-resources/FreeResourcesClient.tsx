@@ -37,11 +37,10 @@ export default function FreeResourcesClient({ levels }: { levels: FreeResourceLe
     <div className="pt-16 min-h-screen bg-paper dark:bg-ink-navy">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
         <motion.header initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-10">
-          <h1 className="relative inline-block font-heading font-extrabold text-3xl sm:text-4xl text-ink-navy dark:text-paper">
+          <h1 className="font-heading font-extrabold text-3xl sm:text-4xl text-ink-navy dark:text-paper">
             Free Resources
-            <span aria-hidden className="absolute left-0 -bottom-1.5 h-1 w-full rounded-full bg-gradient-to-r from-yellow-600 to-amber-400" />
           </h1>
-          <p className="mt-5 text-sm sm:text-base text-slate dark:text-paper/60 max-w-xl">
+          <p className="mt-3 text-sm sm:text-base text-slate dark:text-paper/60 max-w-xl">
             Free notes, question banks and past papers for every CA subject.
           </p>
         </motion.header>
@@ -121,7 +120,7 @@ export default function FreeResourcesClient({ levels }: { levels: FreeResourceLe
                         <div className="border-t border-line-gray-light dark:border-line-gray-dark px-3 sm:px-4 py-2">
                           {links.length === 0 ? (
                             <p className="px-2 py-4 text-sm text-slate dark:text-paper/60">
-                              No resources for this subject yet — check back soon.
+                              Nothing here yet — check back soon.
                             </p>
                           ) : (
                             <ul className="divide-y divide-line-gray-light dark:divide-line-gray-dark">

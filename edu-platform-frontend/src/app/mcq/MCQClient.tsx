@@ -36,6 +36,8 @@ import {
   INITIAL_MCQ_BUNDLES,
   DURATION_LABELS,
   calculateMCQCartPrice,
+  mcqGroupLabel,
+  hasGroupChip,
 } from "@/lib/mcqPricingData";
 
 export default function MCQClient({
@@ -632,9 +634,9 @@ export default function MCQClient({
                         <span className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black tracking-wider uppercase">
                           {subject.code}
                         </span>
-                        {subject.groupName !== "All" && (
+                        {hasGroupChip(subject.groupName) && (
                           <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-black/5 dark:bg-white/5 border border-white/10 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
-                            {subject.groupName}
+                            {mcqGroupLabel(subject.groupName)}
                           </span>
                         )}
                       </div>
@@ -930,7 +932,7 @@ export default function MCQClient({
                                 </span>
                               ) : (
                                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                                  {sub.code} • {sub.groupName}
+                                  {sub.code}{hasGroupChip(sub.groupName) && ` • ${mcqGroupLabel(sub.groupName)}`}
                                 </span>
                               )}
                             </div>

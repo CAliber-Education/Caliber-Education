@@ -3,7 +3,9 @@ on the public /free-resources page and managed by admins.
 
 Subjects come from the MCQ catalog (mcq_subjects), so the page always lists
 every subject the storefront sells, grouped by level, even before an admin
-has added a link for it. Table: supabase/free_resources_migration.sql.
+has added a link for it. EXTRA_SUBJECTS adds the ones that exist only here:
+Foundation papers with no MCQ product, and an "Others" entry per level.
+Tables: supabase/free_resources_migration.sql, free_resources_others_migration.sql.
 """
 from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
@@ -22,6 +24,18 @@ admin_router = APIRouter(prefix="/api/admin/free-resources", tags=["Admin — Fr
 
 # Tab order on the page, matching the MCQ catalog's default of Final first.
 LEVEL_ORDER = ("FINAL", "INTERMEDIATE", "FOUNDATION")
+
+# Free-Resources-only subjects, never sold in the MCQ shop. Ids are stable:
+# links are stored against them. "first" ones go before the level's MCQ
+# subjects (CA Foundation papers 1 and 2), "Others" always goes last.
+EXTRA_SUBJECTS: List[dict] = [
+    {"id": "free-foundation-accounting", "level": "FOUNDATION", "name": "Accounting", "position": "first"},
+    {"id": "free-foundation-laws", "level": "FOUNDATION", "name": "Business Laws", "position": "first"},
+    {"id": "free-final-others", "level": "FINAL", "name": "Others", "position": "last"},
+    {"id": "free-inter-others", "level": "INTERMEDIATE", "name": "Others", "position": "last"},
+    {"id": "free-foundation-others", "level": "FOUNDATION", "name": "Others", "position": "last"},
+]
+_EXTRA_IDS = {s["id"] for s in EXTRA_SUBJECTS}
 
 # PostgREST's "table not found" codes — the migration hasn't been run yet.
 _MISSING_TABLE_CODES = {"PGRST205", "42P01"}
@@ -82,10 +96,15 @@ def _group_by_level(subjects: List[dict], resources: List[dict], *, include_inac
 
     levels = []
     for level in LEVEL_ORDER:
-        level_subjects = [
-            s for s in subjects
-            if (s.get("level") or "").upper() == level and (include_inactive or s.get("is_active", True))
-        ]
+        extras = [e for e in EXTRA_SUBJECTS if e["level"] == level]
+        level_subjects = (
+            [e for e in extras if e["position"] == "first"]
+            + [
+                s for s in subjects
+                if (s.get("level") or "").upper() == level and (include_inactive or s.get("is_active", True))
+            ]
+            + [e for e in extras if e["position"] == "last"]
+        )
         levels.append({
             "level": level,
             "subjects": [
@@ -105,6 +124,13 @@ def _group_by_level(subjects: List[dict], resources: List[dict], *, include_inac
 
 def _subjects(db: Client) -> List[dict]:
     return db.table("mcq_subjects").select("*").order("sort_order").execute().data or []
+
+
+def _others_migration_503() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Run supabase/free_resources_others_migration.sql in Supabase to add links here.",
+    )
 
 
 def _table_missing_503() -> HTTPException:
@@ -181,9 +207,10 @@ async def admin_create_free_resource(
 ):
     title = _clean_title(body.title)
     url = _clean_url(body.url)
-    subject = db.table("mcq_subjects").select("id").eq("id", body.subjectId).execute().data or []
-    if not subject:
-        raise HTTPException(status_code=400, detail="Unknown subject.")
+    if body.subjectId not in _EXTRA_IDS:
+        subject = db.table("mcq_subjects").select("id").eq("id", body.subjectId).execute().data or []
+        if not subject:
+            raise HTTPException(status_code=400, detail="Unknown subject.")
     try:
         existing = db.table("free_resources").select("sort_order").eq("subject_id", body.subjectId).execute().data or []
         # New links go to the bottom of the subject's list.
@@ -198,6 +225,9 @@ async def admin_create_free_resource(
     except PostgrestAPIError as e:
         if e.code in _MISSING_TABLE_CODES:
             raise _table_missing_503()
+        # Foreign-key violation: the old link to mcq_subjects is still in place.
+        if e.code == "23503" and body.subjectId in _EXTRA_IDS:
+            raise _others_migration_503()
         raise
     return _resource_out(res.data[0])
 

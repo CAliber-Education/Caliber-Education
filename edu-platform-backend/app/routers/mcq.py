@@ -50,6 +50,11 @@ DEFAULT_MCQ_BUNDLES = [
 ]
 
 
+def _group_label(group: str) -> str:
+    """Display name for a stored group code ("NONE" is Foundation, which has no groups)."""
+    return {"GROUP_1": "Group I", "GROUP_2": "Group II", "BOTH": "Both Groups", "NONE": "CA Foundation", "All": "CA Foundation"}.get(group, group)
+
+
 def _get_active_subjects_and_bundles(db: Client):
     """Fetches subjects and bundles from DB if table exists, otherwise returns defaults.
 
@@ -143,7 +148,7 @@ def calculate_mcq_cart(level: str, subject_ids: list[str], duration: str, db: Cl
                     "bundlePrice": bundle_price,
                     "originalSum": full_base_sum,
                     "savings": max(0.0, full_base_sum - bundle_price),
-                    "message": f"Get all {group} subjects for just ₹{int(bundle_price)} (Normally ₹{int(full_base_sum)})"
+                    "message": f"Get all {_group_label(group)} subjects for just ₹{int(bundle_price)} (Normally ₹{int(full_base_sum)})"
                 }
         elif level_norm in ["FINAL", "INTERMEDIATE"] and len(selected_set) < 6:
             # Upsell to Both Groups Super Bundle

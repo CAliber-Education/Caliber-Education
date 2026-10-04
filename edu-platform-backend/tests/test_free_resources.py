@@ -54,8 +54,16 @@ def test_public_needs_no_login(seeded):
 def test_public_lists_every_active_subject_by_level_even_without_links(make_client, seeded):
     levels = make_client(STUDENT).get("/api/free-resources").json()["levels"]
     assert [l["level"] for l in levels] == ["FINAL", "INTERMEDIATE", "FOUNDATION"]
-    by_level = {l["level"]: [s["code"] for s in l["subjects"]] for l in levels}
-    assert by_level == {"FINAL": ["FR", "AFM"], "INTERMEDIATE": ["ADV_ACC"], "FOUNDATION": ["QUANT_APT"]}
+    by_level = {l["level"]: [s["id"] for s in l["subjects"]] for l in levels}
+    # Free-Resources-only entries: Foundation's Accounting and Laws papers go
+    # first, and every level ends with "Others".
+    assert by_level == {
+        "FINAL": ["final-fr", "final-afm", "free-final-others"],
+        "INTERMEDIATE": ["inter-adv-acc", "free-inter-others"],
+        "FOUNDATION": ["free-foundation-accounting", "free-foundation-laws", "foundation-quant", "free-foundation-others"],
+    }
+    foundation = levels[2]["subjects"]
+    assert [s["name"] for s in foundation] == ["Accounting", "Business Laws", "Quantitative Aptitude", "Others"]
     afm = levels[0]["subjects"][1]
     assert afm["resources"] == []  # listed even though nothing has been added yet
     assert "isActive" not in afm   # admin-only field
@@ -172,6 +180,50 @@ def test_rejects_unknown_subject(make_client, seeded):
     assert res.status_code == 400
 
 
+@pytest.mark.parametrize("subject_id", ["free-final-others", "free-foundation-accounting", "free-foundation-laws"])
+def test_admin_can_add_links_to_free_only_subjects(make_client, seeded, subject_id):
+    res = make_client(ADMIN).post("/api/admin/free-resources", json={"subjectId": subject_id, "title": "Notes", "url": "https://drive.google.com/x"})
+    assert res.status_code == 200
+    public = make_client(STUDENT).get("/api/free-resources").json()["levels"]
+    entry = next(s for l in public for s in l["subjects"] if s["id"] == subject_id)
+    assert [r["title"] for r in entry["resources"]] == ["Notes"]
+
+
+class _OldForeignKey(FakeSupabaseClient):
+    """The real DB before free_resources_others_migration.sql: links must
+    still point at an mcq_subjects row."""
+    def table(self, name):
+        real = super().table(name)
+        if name != "free_resources":
+            return real
+
+        class _Table:
+            def __getattr__(self, attr):
+                return getattr(real, attr)
+
+            def insert(self, row):
+                if row["subject_id"].startswith("free-"):
+                    class _Fails:
+                        def execute(self):
+                            raise APIError({"code": "23503", "message": "violates foreign key constraint"})
+                    return _Fails()
+                return real.insert(row)
+        return _Table()
+
+
+def test_free_only_subject_before_its_migration_says_what_to_run():
+    db = _OldForeignKey()
+    app.dependency_overrides[get_db] = lambda: db
+    from app.dependencies import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: ADMIN
+    try:
+        res = TestClient(app).post("/api/admin/free-resources", json={"subjectId": "free-inter-others", "title": "x", "url": "https://x.com"})
+    finally:
+        app.dependency_overrides.clear()
+    assert res.status_code == 503
+    assert "free_resources_others_migration.sql" in res.json()["detail"]
+
+
 # ─── Edit / reorder / delete ─────────────────────────────────────────────────
 
 def test_admin_can_edit_title_and_url(make_client, seeded):
@@ -217,5 +269,5 @@ def test_admin_can_delete_a_link(make_client, seeded):
 
 def test_admin_list_includes_inactive_subjects_flagged(make_client, seeded):
     final = make_client(ADMIN).get("/api/admin/free-resources").json()["levels"][0]["subjects"]
-    flags = {s["code"]: s["isActive"] for s in final}
-    assert flags == {"FR": True, "AFM": True, "OLD": False}
+    flags = {s["id"]: s["isActive"] for s in final}
+    assert flags == {"final-fr": True, "final-afm": True, "final-old": False, "free-final-others": True}
