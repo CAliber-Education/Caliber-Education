@@ -7,6 +7,7 @@ defaulted, answer keys are matched by number across parts, every case study
 stays whole and separate, and anything uncertain is flagged for review.
 """
 import asyncio
+import base64
 import io
 import json
 
@@ -16,8 +17,9 @@ from pypdf import PdfWriter
 
 from app.core import mcq_import as core
 from app.core.mcq_import import (
-    NO_ANSWER, AIRateLimited, AIUnavailable, ImportProblem,
-    case_carry, chunk_pages, convert_part, extract_pages, normalize_import,
+    GROQ_VISION_MODEL, IMAGE_SYSTEM_PROMPT, NO_ANSWER, TEXT_SYSTEM_PROMPT, AIRateLimited, AIUnavailable, ImportProblem,
+    GUESSED_ANSWER, chunk_pages, convert_part, enforce_printed_answers, extract_pages, next_carry,
+    normalize_import, render_pages,
 )
 
 ADMIN = {"id": "admin-1", "role": "admin", "email": "a@x.com"}
@@ -312,16 +314,101 @@ def test_paper_details_come_from_the_first_part_that_states_them():
 # ─── Case carry-over between parts ───────────────────────────────────────────
 
 def test_carry_is_the_passage_when_a_part_ends_inside_a_case():
-    assert case_carry(part([case("Delta passage"), case()]), None) == "Delta passage"
+    assert next_carry(part([case("Delta passage"), case()]), None)["case"] == "Delta passage"
 
 
-def test_no_carry_when_a_part_ends_on_a_normal_question():
-    assert case_carry(part([case("Delta passage"), q()]), "older") is None
+def test_no_case_carried_when_a_part_ends_on_a_normal_question():
+    assert next_carry(part([case("Delta passage"), q()]), "older")["case"] is None
 
 
 def test_carry_passes_through_a_part_that_only_continues_the_case():
-    assert case_carry(part([case(), case()]), "Delta passage") == "Delta passage"
-    assert case_carry(part([]), "Delta passage") == "Delta passage"
+    assert next_carry(part([case(), case()]), "Delta passage")["case"] == "Delta passage"
+    assert next_carry(part([]), "Delta passage")["case"] == "Delta passage"
+    assert next_carry(part([]), None) is None
+
+
+def test_carry_records_where_the_part_stopped():
+    carry = next_carry(part([q(number=5, correct_option=0), q(number=6)]), None)
+    assert carry == {"case": None, "last_number": 6, "last_unanswered": True}
+    assert next_carry(part([q(number=7, correct_option=1)]), carry)["last_unanswered"] is False
+
+
+def test_next_part_is_told_to_number_on_and_report_a_split_question():
+    seen = {}
+
+    def handler(request):
+        seen["user"] = json.loads(request.content)["messages"][1]["content"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async def go():
+        async with mock_client(handler) as c:
+            return await convert_part("text", "k", client=c, case_context={"case": None, "last_number": 6, "last_unanswered": True})
+
+    run(go())
+    assert "continue from 7" in seen["user"]
+    assert 'put that in "continuation" with number 6' in seen["user"]
+
+
+def test_a_question_split_by_a_page_break_is_joined_back_together():
+    """Q6's first option ends one page; its other options, answer line and
+    explanation start the next (as in a real test paper)."""
+    parts = [part([q(number=5, correct_option=0, answer_line="Answer: (a)"), q(content="Depreciation for the year is:", options=("₹2,00,000",), number=6)], title="Part B"),
+             {"sections": [{"title": None, "questions": [q(content="Next one?", number=7, correct_option=2)]}],
+              "continuation": {"number": 6, "content": "", "options": ["(b) ₹2,10,000", "(c) ₹2,14,000", "(d) ₹2,04,000"],
+                               "answer_line": "Answer: (b)", "explanation": "₹10,50,000 / 5 years.", "case_narrative": ""}}]
+    qs = [x for s in normalize_import(parts)["sections"] for x in s["questions"]]
+    q6 = qs[1]
+    assert q6["options"] == ["₹2,00,000", "₹2,10,000", "₹2,14,000", "₹2,04,000"]
+    assert (q6["correct_option"], q6["explanation"], q6["review"]) == (1, "₹10,50,000 / 5 years.", [])
+    assert len(qs) == 3 and qs[2]["content"] == "Next one?"
+
+
+def test_a_case_passage_split_by_a_page_break_is_joined_back_together():
+    parts = [part([case("Alpha Ltd bought a machine")], title="Part B"),
+             {"sections": [{"title": None, "questions": [case()]}],
+              "continuation": {"number": None, "case_narrative": "for ₹10,00,000 on 1 April 2025."}}]
+    qs = [x for s in normalize_import(parts)["sections"] for x in s["questions"]]
+    assert qs[0]["case_narrative"] == "Alpha Ltd bought a machine for ₹10,00,000 on 1 April 2025."
+    assert [x["type"] for x in qs] == ["case", "case"]
+
+
+def test_an_answer_pointing_past_the_options_never_counts_as_answered():
+    item = only_q(normalize_import([part([q(options=("only one",), number=6)], key=[{"number": 6, "answer": "b"}])]))
+    assert item["correct_option"] is None and item["review"]
+
+
+def test_an_answer_pushed_onto_the_next_part_lands_on_its_question():
+    """Q6's options end one page and its "Answer: (b)" line starts the next."""
+    parts = [part([q(number=5, correct_option=0), q(number=6)], title="Part A"),
+             part([q(content="Next question", number=7, correct_option=2)], key=[{"number": 6, "answer": "b"}])]
+    r = normalize_import(parts)
+    qs = [x for s in r["sections"] for x in s["questions"]]
+    assert [x["correct_option"] for x in qs] == [0, 1, 2]
+    assert r["stats"]["answered"] == 3
+
+
+# ─── Answers must be printed, not supplied by the AI ─────────────────────────
+
+def test_answer_is_read_from_the_printed_line_not_taken_on_trust():
+    r = enforce_printed_answers(part([q(answer_line="Answer: (c)", correct_option=0)]))
+    assert r["sections"][0]["questions"][0]["correct_option"] == 2
+
+
+@pytest.mark.parametrize("line,expected", [("Answer: (b)", 1), ("Ans. d", 3), ("Ans: (A)", 0), ("Correct option: c", 2), ("(d)", 3)])
+def test_common_answer_line_styles(line, expected):
+    assert enforce_printed_answers(part([q(answer_line=line, correct_option=None)]))["sections"][0]["questions"][0]["correct_option"] == expected
+
+
+def test_an_answer_with_no_printed_line_is_dropped_and_flagged():
+    r = enforce_printed_answers(part([q(correct_option=1)]))  # the AI "knew" it, the paper didn't say
+    item = r["sections"][0]["questions"][0]
+    assert item["correct_option"] is None and item["import_note"] == GUESSED_ANSWER
+    assert only_q(normalize_import([r]))["review"] == [GUESSED_ANSWER]
+
+
+def test_a_printed_line_without_a_letter_keeps_the_models_index():
+    r = enforce_printed_answers(part([q(answer_line="Answer: Lower of cost and NRV", correct_option=1)]))
+    assert r["sections"][0]["questions"][0]["correct_option"] == 1
 
 
 # ─── The Groq call (mocked) ──────────────────────────────────────────────────
@@ -409,7 +496,7 @@ def test_admins_and_mcq_editors_can_import(make_client, user):
     c = make_client(user)
     res = c.post("/api/admin/mcq-import/normalize", json={"parts": [[q(answer="b")]]})
     assert res.status_code == 200 and res.json()["sections"][0]["questions"][0]["correct_option"] == 1
-    ex = c.post("/api/admin/mcq-import/pdf/extract", files={"paper": ("p.pdf", text_pdf(PAPER), "application/pdf")})
+    ex = c.post("/api/admin/mcq-import/pdf/extract", files={"paper": ("p.pdf", text_pdf(PAPER), "application/pdf")}, data={"mode": "text"})
     assert ex.status_code == 200 and "Ind AS 2" in ex.json()["parts"][0]["text"]
 
 
@@ -452,12 +539,12 @@ def test_convert_passes_on_the_wait_and_returns_the_carry(make_client, monkeypat
     res = make_client(ADMIN).post("/api/admin/mcq-import/pdf/convert", json={"text": "x"})
     assert res.status_code == 429 and res.json()["retryAfter"] == 12.5 and res.headers["retry-after"] == "13"
 
-    async def ok(text, key, case_context=None):
+    async def ok(text, key, case_context=None, image=None):
         assert case_context == "Earlier passage"
         return part([case("New passage"), case()])
     monkeypatch.setattr("app.routers.mcq_import.convert_part", ok)
     res = make_client(ADMIN).post("/api/admin/mcq-import/pdf/convert", json={"text": "x", "carry": "Earlier passage"})
-    assert res.status_code == 200 and res.json()["carry"] == "New passage"
+    assert res.status_code == 200 and res.json()["carry"]["case"] == "New passage"
 
 
 def test_convert_reports_ai_failures_as_502(make_client, monkeypatch):
@@ -482,3 +569,111 @@ def test_saving_a_question_with_no_answer_is_refused_not_saved_as_a(make_client,
     body["sections"][0]["questions"][0]["correct_option"] = 1
     assert make_client(ADMIN).post("/api/admin/mcq-sets", json=body).status_code == 200
     assert fake_db.table("questions").select("*").execute().data[0]["correct_option"] == 1
+
+
+# ─── "Best accuracy": pages read as images ───────────────────────────────────
+# Maths laid out by an equation editor is lost in a PDF's text layer (1/2
+# comes out as "1" and "2" on separate lines, P(Ā∩B̄) as P(A∩B)), so by
+# default each page is rendered and read by the vision model instead.
+
+def test_pages_render_to_jpeg_images_one_per_page():
+    images = render_pages(text_pdf(PAPER, "2. Second page?\n(a) Yes\n(b) No"))
+    assert len(images) == 2
+    for b64 in images:
+        raw = base64.b64decode(b64)
+        assert raw[:3] == b"\xff\xd8\xff"  # JPEG
+        assert 50_000 > len(raw) > 1_000
+
+
+def test_image_mode_accepts_a_scanned_page_that_text_mode_rejects():
+    w = PdfWriter()
+    w.add_blank_page(width=612, height=792)  # no text layer, like a scan
+    buf = io.BytesIO()
+    w.write(buf)
+    assert len(render_pages(buf.getvalue())) == 1
+    with pytest.raises(ImportProblem, match="scanned"):
+        extract_pages(buf.getvalue())
+
+
+@pytest.mark.parametrize("data,message", [(b"", "empty"), (b"not a pdf", "isn't a PDF"), (b"%PDF-1.4 junk", "couldn't be read")])
+def test_image_mode_rejects_bad_files_with_a_reason(data, message):
+    with pytest.raises(ImportProblem, match=message):
+        render_pages(data)
+
+
+def test_image_mode_rejects_password_protected_pdfs():
+    w = PdfWriter()
+    w.add_blank_page(width=612, height=792)
+    w.encrypt(user_password="secret", owner_password="owner")
+    buf = io.BytesIO()
+    w.write(buf)
+    with pytest.raises(ImportProblem, match="password"):
+        render_pages(buf.getvalue())
+
+
+def test_extract_defaults_to_page_images(make_client):
+    res = make_client(ADMIN).post("/api/admin/mcq-import/pdf/extract", files={
+        "paper": ("p.pdf", text_pdf(PAPER, "2. Next?\n(a) x\n(b) y"), "application/pdf"),
+        "answer_key": ("k.pdf", text_pdf("ANSWER KEY\n1. (b)"), "application/pdf"),
+    })
+    assert res.status_code == 200 and res.json()["mode"] == "image"
+    parts = res.json()["parts"]
+    assert [p["label"] for p in parts] == ["Question paper · page 1", "Question paper · page 2", "Answer key · page 1"]
+    assert all("image" in p and "text" not in p for p in parts)
+
+
+def test_extract_rejects_an_unknown_mode(make_client):
+    res = make_client(ADMIN).post("/api/admin/mcq-import/pdf/extract",
+                                  files={"paper": ("p.pdf", text_pdf(PAPER), "application/pdf")}, data={"mode": "magic"})
+    assert res.status_code == 400
+
+
+@pytest.mark.parametrize("body", [{}, {"text": "x", "image": "aGk="}, {"carry": "only a carry"}])
+def test_convert_needs_exactly_one_of_text_or_image(make_client, monkeypatch, body):
+    monkeypatch.setattr("app.routers.mcq_import.get_settings", lambda: _Settings("k"))
+    assert make_client(ADMIN).post("/api/admin/mcq-import/pdf/convert", json=body).status_code == 400
+
+
+def test_convert_passes_a_page_image_through(make_client, monkeypatch):
+    monkeypatch.setattr("app.routers.mcq_import.get_settings", lambda: _Settings("k"))
+    seen = {}
+
+    async def fake(text, key, case_context=None, image=None):
+        seen.update(text=text, image=image)
+        return part([q(correct_option=0)])
+    monkeypatch.setattr("app.routers.mcq_import.convert_part", fake)
+    res = make_client(ADMIN).post("/api/admin/mcq-import/pdf/convert", json={"image": "aGVsbG8="})
+    assert res.status_code == 200 and seen == {"text": None, "image": "aGVsbG8="}
+
+
+def test_vision_request_sends_the_page_to_the_vision_model():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async def go():
+        async with mock_client(handler) as c:
+            return await convert_part(None, "k", client=c, image="aGVsbG8=", case_context="Delta passage")
+
+    run(go())
+    body = seen["body"]
+    assert body["model"] == GROQ_VISION_MODEL and "reasoning_effort" not in body
+    assert body["messages"][0]["content"] == IMAGE_SYSTEM_PROMPT
+    text_part, image_part = body["messages"][1]["content"]
+    assert "Delta passage" in text_part["text"]
+    assert image_part == {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,aGVsbG8="}}
+
+
+def test_convert_part_refuses_both_or_neither_input():
+    with pytest.raises(ValueError):
+        run(convert_part("some text", "k", image="aGk="))
+    with pytest.raises(ValueError):
+        run(convert_part(None, "k"))
+
+
+@pytest.mark.parametrize("prompt", [TEXT_SYSTEM_PROMPT, IMAGE_SYSTEM_PROMPT], ids=["text", "image"])
+def test_both_modes_are_told_how_to_write_maths(prompt):
+    for rule in ("numerator first", "x²", "log₂", "U+0304", "∩ ∪", "√"):
+        assert rule in prompt

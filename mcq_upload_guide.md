@@ -24,19 +24,21 @@ The manual editor has been entirely redesigned so that Case Scenarios and Normal
 
 ## Method 2: Import from PDF (fastest)
 
-For a typed question paper (one where you can select the text).
-
 1. Open **Sections & Questions** and click **Import from PDF**.
 2. Choose the **question paper PDF**. If the answers are in a separate file, also choose the **answer key PDF**.
-3. Click **Import** and wait — usually seconds. Long papers are read in parts; on the free AI plan you may see a short countdown between parts. It carries on by itself.
-4. Review, then **Save Paper**.
+3. Choose how it reads the paper:
+   - **Best accuracy (recommended)** — reads each page as an image, the way you see it. Fractions (1/2), powers (x²), log bases (log₂), bars (Ā, B̄) and symbols (∩ ∪ √) come out right, and scanned papers work too. About **1 page a minute** on the free AI plan.
+   - **Faster** — reads the PDF's text. Fine for theory papers (Law, Audit), but maths and symbols can come out wrong — fractions upside down or split, bars and powers lost — and scanned papers won't work.
+4. Click **Import** and leave it open — on the free plan you'll see a countdown between pages. It carries on by itself.
+5. Review, then **Save Paper**.
+
+Maths is stored as plain text with symbols (e.g. `P(Ā∩B̄)`, `log₄(x² + x)`, `(2a + b)/(a + 2b)`), so it shows the same in the editor and for students.
 
 What it reads: sections, questions, options, answers (printed under each question, or from an answer key anywhere in the paper or a separate PDF), explanations, marks, and case studies. For a new, empty paper it also fills in the **title, duration, total marks and subject** on Hierarchy & Settings.
 
 What to check:
 - Questions **highlighted in yellow** need a look — e.g. "No answer found in the file", or fewer than 4 options found. **Save stays blocked until every question has an answer.**
-- Answers are **never guessed**: if the paper doesn't give one, the question is left unanswered and highlighted for you.
-- Scanned or photographed PDFs aren't supported.
+- Answers are **never guessed**: if the paper doesn't print one, the question is left unanswered and highlighted for you — even if the AI tried to supply one ("The AI suggested an answer that isn't printed in the paper").
 
 ---
 

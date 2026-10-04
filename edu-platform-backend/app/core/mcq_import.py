@@ -9,12 +9,14 @@ Groq's free tier allows ~8,000 tokens per minute (input + output), so long
 papers are split into parts (chunk_pages) that the browser sends one at a
 time, waiting out 429s, rather than one long request.
 """
+import base64
 import io
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+import pypdfium2 as pdfium
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -28,6 +30,17 @@ MAX_PART_CHARS = 12000
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "openai/gpt-oss-120b"
+# Reads page images, for "Best accuracy" imports. Maths laid out by an
+# equation editor (stacked fractions, powers, log bases, overbars, symbol
+# fonts) is lost when text is copied out of a PDF — 1/2 comes out as "1" and
+# "2" on separate lines, P(Ā∩B̄) as P(A∩B) — but survives when the page is
+# read the way a person sees it. Also works for scanned papers.
+GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
+# Groq counts each image as 2,048 tokens; one page per request keeps prompt +
+# image + reply (max 3,500) under the free tier's 8,000 tokens/minute.
+RENDER_SCALE = 2.0          # ≈144 DPI: superscripts and small print stay legible
+MAX_RENDER_SIDE = 2200      # cap for oversized pages (A3, posters)
+MAX_IMAGE_B64 = 6 * 1024 * 1024
 
 LEVELS = ("FINAL", "INTERMEDIATE", "FOUNDATION")
 DIFFICULTIES = ("easy", "medium", "hard")
@@ -50,13 +63,47 @@ class AIUnavailable(Exception):
 
 # ─── PDF → text parts ─────────────────────────────────────────────────────────
 
-def extract_pages(pdf_bytes: bytes, what: str = "PDF") -> List[str]:
+def _check_pdf_bytes(pdf_bytes: bytes, what: str) -> None:
     if not pdf_bytes:
         raise ImportProblem(f"The {what} is empty.")
     if len(pdf_bytes) > MAX_PDF_BYTES:
         raise ImportProblem(f"The {what} is over {MAX_PDF_BYTES // (1024 * 1024)} MB.")
     if not pdf_bytes.lstrip()[:5].startswith(b"%PDF"):
         raise ImportProblem(f"The {what} isn't a PDF file.")
+
+
+def render_pages(pdf_bytes: bytes, what: str = "PDF") -> List[str]:
+    """Each page as a base64 JPEG, for the vision model. Needs no text layer,
+    so scanned papers work too (as well as the scan is legible)."""
+    _check_pdf_bytes(pdf_bytes, what)
+    try:
+        doc = pdfium.PdfDocument(pdf_bytes)
+    except pdfium.PdfiumError as e:
+        if "password" in str(e).lower():
+            raise ImportProblem(f"The {what} is password-protected. Remove the password and try again.")
+        raise ImportProblem(f"The {what} couldn't be read. Try re-saving it as PDF.")
+    try:
+        if len(doc) > MAX_PAGES:
+            raise ImportProblem(f"The {what} has {len(doc)} pages — split it into files of up to {MAX_PAGES} pages.")
+        images = []
+        for i in range(len(doc)):
+            img = doc[i].render(scale=RENDER_SCALE).to_pil().convert("RGB")
+            img.thumbnail((MAX_RENDER_SIDE, MAX_RENDER_SIDE))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=82, optimize=True)
+            images.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+        return images
+    finally:
+        doc.close()
+
+
+def image_parts(images: List[str], label: str) -> List[Dict[str, str]]:
+    """One part per page: Groq allows ~8,000 tokens/minute and an image alone is 2,048."""
+    return [{"label": f"{label} · page {n}", "image": img} for n, img in enumerate(images, 1)]
+
+
+def extract_pages(pdf_bytes: bytes, what: str = "PDF") -> List[str]:
+    _check_pdf_bytes(pdf_bytes, what)
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
         # Many "protected" PDFs only restrict editing and open with an empty
@@ -148,8 +195,7 @@ def chunk_pages(pages: List[str], label: str, budget: int = CHUNK_CHARS) -> List
 
 # ─── Groq ─────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You convert CA exam MCQ papers into JSON. The text may be only one part of a longer paper; process just what is in it.
-Return ONE JSON object and nothing else:
+_PROMPT_BODY = """Return ONE JSON object and nothing else:
 {
   "title": the paper title from its heading, or null,
   "level": "FINAL" | "INTERMEDIATE" | "FOUNDATION" | null,
@@ -162,68 +208,174 @@ Return ONE JSON object and nothing else:
       "case_narrative": the full case passage, ONLY on the first question of each case (omit otherwise),
       "content": the question text without its number,
       "options": the option texts without their (a)/(b)/(c)/(d) labels,
-      "correct_option": 0-based index of the answer (a=0, b=1, c=2, d=3) when it is printed with the question, else null,
+      "answer_line": the answer exactly as printed with this question (e.g. "Answer: (b)"), or null if none is printed with it,
+      "correct_option": 0-based index of that printed answer (a=0, b=1, c=2, d=3), or null — always null when answer_line is null,
       "explanation": the explanation if the paper gives one, else "",
       "marks": number or null,
       "negative_marks": number or null
   } ] } ],
-  "answer_key": [ { "number": question number, "answer": "a" | "b" | "c" | "d" } ]
+  "answer_key": [ { "number": question number, "answer": "a" | "b" | "c" | "d" } ],
+  "continuation": null, or — only when this part BEGINS with the rest of a question or case passage from the previous part —
+    { "number": that question's number, "content": more of its question text or "", "options": its remaining options (without labels),
+      "answer_line": its answer as printed or null, "explanation": its explanation or "", "case_narrative": more of the case passage or "" }
 }
 Rules:
-- Include every question in the text, in order. Never skip, merge or invent questions.
-- Answers come ONLY from the paper. An answer printed with its question goes in correct_option. Answers listed separately (an answer key or answer table) go in answer_key: copy EVERY entry of the key exactly as printed, including entries for question numbers that are not in this text — those questions are in another part of the paper. Never work out or guess an answer.
-- If the text is only an answer key, return an empty "sections" list and fill "answer_key".
+- Include every question in this part, in order. Never skip, merge or invent questions.
+- Answers come ONLY from what is printed. You are copying the paper, not sitting it: never solve a question or fill in an answer you know, even an obvious one. An answer printed with its question goes in answer_line and correct_option. Answers listed separately (an answer key or answer table) go in answer_key: copy EVERY entry of the key exactly as printed, including entries for question numbers that are not in this part — those questions are in another part of the paper.
+- If this part is only an answer key, return an empty "sections" list and fill "answer_key".
 - Copy question and option text exactly, keeping symbols such as ₹ and %. Ignore page headers, footers and page numbers.
-- A case study is a passage followed by its questions. Every question after a case passage belongs to that case — including questions after a page break — until the next case passage, a new section heading, or the answer key. All of them are type "case"; only the first carries case_narrative. A question that continues a case whose passage is not in this text is also type "case".
-- marks and negative_marks: use what the paper states (e.g. "each MCQ carries 2 marks"); null if it doesn't say."""
+- A case study is a passage followed by its questions. Every question after a case passage belongs to that case — including questions after a page break — until the next case passage, a new section heading, or the answer key. All of them are type "case"; only the first carries case_narrative. A question that continues a case whose passage is not in this part is also type "case".
+- marks and negative_marks: use what the paper states (e.g. "each MCQ carries 2 marks"); null if it doesn't say.
+Maths: write it as plain text with Unicode symbols, exactly as printed:
+- fractions as numerator/denominator, numerator first: 1/2, 5/12, (2a + b)/(a + 2b)
+- powers with superscripts: x², x³, xⁿ; longer exponents as x^(n+1)
+- log bases and other subscripts: log₂, log₁₀, x₁; longer ones as log_(a+b)
+- a bar over a letter (complement, mean) as the letter followed by U+0304: Ā, B̄, x̄
+- symbols as themselves: ∩ ∪ ∈ ∉ ⊂ ∅ √ ∛ π θ Σ ∫ ≤ ≥ ≠ ≈ ± × ÷ ∞ °; roots as √8 or √(x + 1)"""
+
+TEXT_SYSTEM_PROMPT = (
+    "You convert CA exam MCQ papers into JSON. You are given the text of one part of a paper "
+    "(possibly all of it); process just what is in it.\n" + _PROMPT_BODY
+)
+IMAGE_SYSTEM_PROMPT = (
+    "You read one page image of a CA exam MCQ paper and convert it into JSON, reading maths and "
+    "symbols exactly as they appear on the page. The paper may continue on other pages; process "
+    "just this page.\n" + _PROMPT_BODY
+)
 
 
 MAX_CARRY_CHARS = 1500
 
 
-def case_carry(result: Dict[str, Any], incoming: Optional[str]) -> Optional[str]:
-    """If this part ends inside a case study, the passage of that case, so the
-    next part can be told its opening questions continue it. A part that ends
-    in a case whose passage was itself carried in passes that carry on."""
-    questions = [q for s in (result.get("sections") or []) if isinstance(s, dict)
-                 for q in (s.get("questions") or []) if isinstance(q, dict)]
-    if not questions:
-        return incoming  # e.g. a page holding only headers or instructions
-    if _text(questions[-1].get("type")).lower() != "case":
-        return None
-    for q in reversed(questions):
-        if _text(q.get("type")).lower() != "case":
-            break
-        narrative = _text(q.get("case_narrative"))
-        if narrative:
-            return narrative[:MAX_CARRY_CHARS]
-    return incoming
+def _questions_of(result: Dict[str, Any]) -> List[dict]:
+    return [q for s in (result.get("sections") or []) if isinstance(s, dict)
+            for q in (s.get("questions") or []) if isinstance(q, dict)]
 
 
-async def convert_part(text: str, api_key: str, client: Optional[httpx.AsyncClient] = None,
-                       case_context: Optional[str] = None) -> Dict[str, Any]:
-    """One Groq request for one part of a paper. Raises AIRateLimited on a
-    429 (the caller retries after the wait) and AIUnavailable otherwise.
-    case_context: the passage of a case study the previous part ended inside."""
-    context = ""
-    if case_context:
-        context = (
-            "CONTEXT: The previous part of this paper ended in the middle of a case study. Its passage was:\n"
-            f'"""{case_context[:MAX_CARRY_CHARS]}"""\n'
-            'Questions at the start of the text below that continue that case are type "case" - '
-            "leave their case_narrative empty, the passage is already recorded.\n\n"
-        )
-    payload = {
-        "model": GROQ_MODEL,
-        "temperature": 0,
-        "reasoning_effort": "medium",
-        "max_completion_tokens": 5000,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": context + "PAPER TEXT:\n\n" + text},
-        ],
+def _carry_dict(carry: Any) -> Dict[str, Any]:
+    """The carry the browser hands back between parts. A plain string is the
+    older form (just a case passage), still accepted from open tabs."""
+    if isinstance(carry, str):
+        carry = {"case": carry}
+    if not isinstance(carry, dict):
+        carry = {}
+    number = _num(carry.get("last_number"))
+    return {
+        "case": _text(carry.get("case"))[:MAX_CARRY_CHARS] or None,
+        "last_number": int(number) if number is not None and number == int(number) else None,
+        "last_unanswered": bool(carry.get("last_unanswered")),
     }
+
+
+def next_carry(result: Dict[str, Any], incoming: Any) -> Optional[Dict[str, Any]]:
+    """What the next part needs to know about where this one stopped:
+    - case: the passage of a case study this part ended inside, so the next
+      part's opening questions stay in that case;
+    - last_number / last_unanswered: the last question seen and whether its
+      answer was on this part — an "Answer: (b)" line pushed onto the next
+      page by a page break is then credited to the right question, and the
+      next page numbers on from it instead of restarting."""
+    prev = _carry_dict(incoming)
+    questions = _questions_of(result)
+    if not questions:
+        return prev if any(prev.values()) else None  # e.g. a page of instructions only
+    last = questions[-1]
+    case = None
+    if _text(last.get("type")).lower() == "case":
+        case = prev["case"]
+        for q in reversed(questions):
+            if _text(q.get("type")).lower() != "case":
+                break
+            if _text(q.get("case_narrative")):
+                case = _text(q.get("case_narrative"))[:MAX_CARRY_CHARS]
+                break
+    number = _num(last.get("number"))
+    return {
+        "case": case,
+        "last_number": int(number) if number is not None and number == int(number) else None,
+        "last_unanswered": last.get("correct_option") is None,
+    }
+
+
+def _context_text(carry: Any) -> str:
+    c = _carry_dict(carry)
+    lines = []
+    if c["case"]:
+        lines.append(
+            "The previous part of this paper ended in the middle of a case study. Its passage was:\n"
+            f'"""{c["case"]}"""\n'
+            'Questions at the start of this part that continue that case are type "case" - '
+            "leave their case_narrative empty, the passage is already recorded."
+        )
+    if c["last_number"] is not None:
+        n = c["last_number"]
+        lines.append(
+            f"The previous part ended with question {n}; questions here continue from {n + 1} — use the numbers as printed. "
+            f"A page break can split question {n}: if this part begins with the rest of it (more of its text, its remaining "
+            f"options, its answer line or explanation), put that in \"continuation\" with number {n} — do not start a new question for it."
+        )
+    if c["case"]:
+        lines.append('If this part begins with more of that case passage (before any question), put that text in continuation.case_narrative.')
+    return "CONTEXT:\n" + "\n".join(lines) + "\n\n" if lines else ""
+
+
+_ANSWER_LETTER = re.compile(r"\(\s*([a-dA-D])\s*\)|\b(?:ans(?:wer)?|option|correct)\b\s*[:.\-–]?\s*\(?\s*([a-dA-D])\b", re.IGNORECASE)
+GUESSED_ANSWER = "The AI suggested an answer that isn't printed in the paper — pick the correct option."
+
+
+def enforce_printed_answers(result: Dict[str, Any]) -> Dict[str, Any]:
+    """An answer counts only if the model also copied the line it's printed
+    on — and the letter is read from that copy here, not taken on trust.
+    A model that "helpfully" solved an unanswered question (seen with the
+    vision model) leaves no printed line behind, so its answer is dropped
+    and the question flagged instead of going in silently."""
+    for q in _questions_of(result):
+        line = _text(q.get("answer_line"))
+        if line:
+            m = _ANSWER_LETTER.search(line)
+            if m:
+                q["correct_option"] = "abcd".index((m.group(1) or m.group(2)).lower())
+        elif q.get("correct_option") is not None:
+            q["correct_option"] = None
+            q["import_note"] = GUESSED_ANSWER
+    return result
+
+
+async def convert_part(text: Optional[str], api_key: str, client: Optional[httpx.AsyncClient] = None,
+                       case_context: Any = None, image: Optional[str] = None) -> Dict[str, Any]:
+    """One Groq request for one part of a paper: its text, or (image=base64
+    JPEG) one rendered page for the vision model. Raises AIRateLimited on a
+    429 (the caller retries after the wait) and AIUnavailable otherwise.
+    case_context: the previous part's carry (see next_carry)."""
+    if (text is None) == (image is None):
+        raise ValueError("convert_part needs exactly one of text or image")
+    context = _context_text(case_context)
+    if image is not None:
+        payload = {
+            "model": GROQ_VISION_MODEL,
+            "temperature": 0,
+            "max_completion_tokens": 3500,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": IMAGE_SYSTEM_PROMPT},
+                {"role": "user", "content": [
+                    {"type": "text", "text": context + "PAGE IMAGE:"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
+                ]},
+            ],
+        }
+    else:
+        payload = {
+            "model": GROQ_MODEL,
+            "temperature": 0,
+            "reasoning_effort": "medium",
+            "max_completion_tokens": 5000,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": TEXT_SYSTEM_PROMPT},
+                {"role": "user", "content": context + "PAPER TEXT:\n\n" + text},
+            ],
+        }
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
         if client is None:
@@ -248,7 +400,7 @@ async def convert_part(text: str, api_key: str, client: Optional[httpx.AsyncClie
         raise AIUnavailable("The AI returned an unreadable answer for this part.")
     if not isinstance(data, dict):
         raise AIUnavailable("The AI returned an unexpected answer for this part.")
-    return data
+    return enforce_printed_answers(data)
 
 
 # ─── Normalisation (shared by PDF and JSON) ───────────────────────────────────
@@ -404,6 +556,9 @@ def _clean_question(q: dict) -> Optional[dict]:
     if not content and not options:
         return None  # nothing usable
     correct, answer_note = _answer(q, options)
+    if correct is None and not answer_note:
+        # e.g. GUESSED_ANSWER from enforce_printed_answers, said more precisely than NO_ANSWER
+        answer_note = _text(q.get("import_note")) or None
     narrative = _text(_first(q, "case_narrative", "caseText", "case_text", "passage", "case_passage"))
     is_case = _text(q.get("type")).lower() == "case" or bool(narrative)
     marks = _num(q.get("marks"))
@@ -424,6 +579,41 @@ def _clean_question(q: dict) -> Optional[dict]:
         "_number": int(number) if number is not None and number == int(number) else None,
         "_answer_note": answer_note,
     }
+
+
+def _apply_continuation(cont: Any, sections: List[dict]) -> None:
+    """Join the start of a part back onto the question (or case passage) a
+    page break cut off at the end of the previous part: more question text,
+    the remaining options, its printed answer, its explanation."""
+    if not isinstance(cont, dict):
+        return
+    earlier = [q for s in sections for q in s["questions"]]
+    if not earlier:
+        return
+    target = earlier[-1]
+    n = _num(cont.get("number"))
+    if n is not None:
+        same = [q for q in earlier if q["_number"] == n]
+        if same:
+            target = same[-1]
+    more = _text(cont.get("content"))
+    if more:
+        target["content"] = f"{target['content']} {more}".strip()
+    options = cont.get("options") if isinstance(cont.get("options"), list) else []
+    target["options"] = target["options"] + [_LABEL.sub("", o).strip() for o in options if isinstance(o, str) and o.strip()]
+    if not target["explanation"]:
+        target["explanation"] = _text(cont.get("explanation"))
+    line = _text(cont.get("answer_line"))
+    if line and target["correct_option"] is None:
+        m = _ANSWER_LETTER.search(line)
+        if m:
+            target["correct_option"] = "abcd".index((m.group(1) or m.group(2)).lower())
+            target["_answer_note"] = None
+    passage = _text(cont.get("case_narrative"))
+    if passage:
+        heads = [q for q in earlier if q["type"] == "case" and q["case_narrative"]]
+        if heads:
+            heads[-1]["case_narrative"] = f"{heads[-1]['case_narrative']} {passage}"
 
 
 def normalize_import(parts: List[Any]) -> dict:
@@ -452,6 +642,7 @@ def normalize_import(parts: List[Any]) -> dict:
         if meta["level"] is None and isinstance(part_meta, dict):
             meta["level"] = _level(part_meta.get("level"))
         key.update(_answer_key(part))
+        _apply_continuation(part.get("continuation") if isinstance(part, dict) else None, sections)
 
         for i, s in enumerate(part_sections):
             if not isinstance(s, dict):
@@ -528,6 +719,11 @@ def normalize_import(parts: List[Any]) -> dict:
         out_qs = []
         for i, q in enumerate(s["questions"]):
             review: List[str] = []
+            co = q["correct_option"]
+            if co is not None and not (0 <= co < len(q["options"])):
+                # e.g. "Answer: (b)" for a question whose other options were lost
+                q["correct_option"] = None
+                q["_answer_note"] = "The answer given doesn't match one of the options found — check the options and pick the answer."
             if q["correct_option"] is None:
                 review.append(q["_answer_note"] or NO_ANSWER)
             else:

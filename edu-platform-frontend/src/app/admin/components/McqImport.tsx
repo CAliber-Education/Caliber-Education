@@ -117,6 +117,10 @@ export default function ImportButtons({
 function PdfImportDialog({ onClose, onImported }: { onClose: () => void; onImported: (r: ImportResult, source: string) => void }) {
   const [paper, setPaper] = useState<File | null>(null);
   const [answerKey, setAnswerKey] = useState<File | null>(null);
+  // "image" reads each page as a picture: maths (fractions, powers, log bases,
+  // bars, symbols) and scanned papers come out right, ~1 page/min on the free
+  // AI plan. "text" reads the PDF's text layer: faster, fine for theory papers.
+  const [mode, setMode] = useState<"image" | "text">("image");
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cancelled = useRef(false);
@@ -149,19 +153,23 @@ function PdfImportDialog({ onClose, onImported }: { onClose: () => void; onImpor
       const form = new FormData();
       form.append("paper", paper);
       if (answerKey) form.append("answer_key", answerKey);
+      form.append("mode", mode);
       const ex = await api("/pdf/extract", { method: "POST", body: form });
       if (!ex.ok) throw new Error(await errorText(ex, "The PDF couldn't be read."));
-      const { parts } = (await ex.json()) as { parts: { label: string; text: string }[] };
+      const { parts } = (await ex.json()) as { parts: { label: string; text?: string; image?: string }[] };
 
       const results: unknown[] = [];
-      let carry: string | null = null; // passage of a case study the previous part ended inside
+      // Where the previous part stopped (open case study, last question number).
+      // Opaque here: the server builds it and reads it back.
+      let carry: unknown = null;
       for (let i = 0; i < parts.length; i++) {
         let waits = 0;
         let glitches = 0;
         for (;;) {
           if (cancelled.current) throw new Cancelled();
           setProgress({ phase: "converting", part: i + 1, total: parts.length, label: parts[i].label });
-          const res = await api("/pdf/convert", { method: "POST", body: JSON.stringify({ text: parts[i].text, carry }) });
+          const part = parts[i].image ? { image: parts[i].image } : { text: parts[i].text };
+          const res = await api("/pdf/convert", { method: "POST", body: JSON.stringify({ ...part, carry }) });
           if (res.status === 429) {
             // Free-tier per-minute limit: wait as long as the server says, then retry this part.
             const body = await res.json().catch(() => ({}));
@@ -241,10 +249,23 @@ function PdfImportDialog({ onClose, onImported }: { onClose: () => void; onImpor
               )}
               <input type="file" accept=".pdf,application/pdf" className="hidden" onChange={pick(setAnswerKey)} />
             </label>
-            <p className="text-[11px] text-slate dark:text-paper/50 leading-relaxed">
-              Works with typed PDFs (text you can select). Scanned or photographed papers aren&apos;t supported.
-              Long papers are read in parts, and the free AI plan pauses about a minute between some of them.
-            </p>
+            <fieldset className="space-y-2">
+              <legend className="text-xs font-bold text-ink-navy dark:text-paper mb-1">How should it read the paper?</legend>
+              {([
+                ["image", "Best accuracy (recommended)",
+                  "Reads each page as an image, like you see it — fractions, powers, logs, symbols, tables and scanned papers come out right. About 1 page a minute on the free AI plan."],
+                ["text", "Faster",
+                  "Reads the PDF's text. Fine for theory papers like Law or Audit, but maths and symbols can come out wrong, and scanned papers won't work."],
+              ] as const).map(([value, title, hint]) => (
+                <label key={value} className={`flex gap-3 items-start px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${mode === value ? "border-signal-emerald bg-signal-emerald/5" : "border-line-gray-light dark:border-line-gray-dark hover:border-slate/40"}`}>
+                  <input type="radio" name="import-mode" value={value} checked={mode === value} onChange={() => setMode(value)} className="mt-0.5 w-4 h-4 accent-signal-emerald" />
+                  <span>
+                    <span className="block text-xs font-bold text-ink-navy dark:text-paper">{title}</span>
+                    <span className="block text-[11px] text-slate dark:text-paper/60 leading-relaxed">{hint}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
           </div>
         )}
 
