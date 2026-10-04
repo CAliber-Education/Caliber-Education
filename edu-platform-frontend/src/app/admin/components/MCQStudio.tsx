@@ -237,10 +237,12 @@ export default function MCQStudio({ series }: { series: any[] }) {
                   <span className="w-20 font-medium">Hierarchy:</span>
                   <span className="text-xs bg-slate/10 px-2 py-0.5 rounded text-ink-navy dark:text-paper">{p.level} • {p.groupName}</span>
                 </div>
-                <div className="flex items-center text-sm text-slate dark:text-paper/70">
-                  <span className="w-20 font-medium">Subject:</span>
-                  <span className="font-semibold text-signal-emerald">{p.subjectCode}</span>
-                </div>
+                {!p.isScholarship && (
+                  <div className="flex items-center text-sm text-slate dark:text-paper/70">
+                    <span className="w-20 font-medium">Subject:</span>
+                    <span className="font-semibold text-signal-emerald">{p.subjectCode}</span>
+                  </div>
+                )}
                 <div className="flex items-center text-sm text-slate dark:text-paper/70">
                   <span className="w-20 font-medium">Type:</span>
                   {p.isScholarship
@@ -422,7 +424,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
                 <span>
                   <span className="block text-sm font-bold text-ink-navy dark:text-paper">Scholarship Test</span>
                   <span className="block text-xs text-slate dark:text-paper/60">
-                    Sold on its own at the top of the MCQ page. One attempt per student, and they see &quot;result coming soon&quot; instead of marks.
+                    Not part of any subject — sold on its own at the top of the MCQ page. One attempt per student, and they see &quot;result coming soon&quot; instead of marks.
                     Rank everyone and publish results from Admin → Leaderboard.
                   </span>
                 </span>
@@ -468,6 +470,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
                 </select>
               </div>
             </div>
+{!data.isScholarship && (
             <div>
               <label className="block text-xs font-bold text-slate uppercase mb-1">Subject</label>
               <select className={inp} value={data.subjectCode} onChange={e => setData({ ...data, subjectCode: e.target.value })}>
@@ -478,6 +481,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
                 }
               </select>
             </div>
+            )}
             {data.testType === "CHAPTER_WISE" && (
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Chapter Name</label>

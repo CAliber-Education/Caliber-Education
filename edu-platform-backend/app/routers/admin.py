@@ -1581,9 +1581,9 @@ async def admin_upsert_set(
         set_id = str(uuid.uuid4())
 
     subject_code = (body.get("subjectCode") or body.get("subject_code") or "").strip()
-    if not subject_code and body.get("isScholarship"):
-        subject_code = "SCHOLARSHIP"  # sold per paper, not under a subject
-    if not subject_code:
+    if body.get("isScholarship"):
+        subject_code = None  # a Scholarship Test isn't under any subject
+    elif not subject_code:
         raise HTTPException(status_code=400, detail="Select a subject before saving this paper.")
 
     sections_payload = body.get("sections", [])
@@ -1676,6 +1676,12 @@ async def admin_upsert_set(
             result = db.table("mcq_papers").upsert(data).execute()
     except HTTPException:
         raise
+    except PostgrestAPIError as e:
+        print(f"MCQ SAVE ERROR: {e}")
+        if e.code == "23503" and "subject_code" in str(e):
+            # mcq_papers_subject_code_fkey: the code isn't in public.subjects.
+            raise HTTPException(status_code=400, detail=f"The subject {subject_code} isn't set up in the database. Pick a subject from the list.")
+        raise HTTPException(status_code=500, detail="Failed to save paper. Please check every field and try again.")
     except Exception as e:
         print(f"MCQ SAVE ERROR: {e}")
         raise HTTPException(status_code=500, detail="Failed to save paper. Please check every field and try again.")

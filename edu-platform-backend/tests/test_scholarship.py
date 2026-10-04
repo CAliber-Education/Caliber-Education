@@ -262,3 +262,15 @@ def test_saving_a_scholarship_paper_sets_one_attempt_and_lock(make_client, db):
 def test_scholarship_paper_needs_a_price(make_client, db):
     res = make_client(ADMIN).post("/api/admin/mcq-sets", json=_paper_body(id="new-sch", isScholarship=True, price=0))
     assert res.status_code == 400
+
+
+
+def test_scholarship_paper_has_no_subject(make_client, db):
+    res = make_client(ADMIN).post("/api/admin/mcq-sets", json=_paper_body(id="new-sch", subjectCode="QUANT_APT", isScholarship=True, price=99))
+    assert res.status_code == 200, res.text
+    assert next(p for p in db.store["mcq_papers"] if p["id"] == "new-sch")["subject_code"] is None
+
+
+def test_normal_paper_still_needs_a_subject(make_client, db):
+    res = make_client(ADMIN).post("/api/admin/mcq-sets", json=_paper_body(id="n1", subjectCode=""))
+    assert res.status_code == 400
