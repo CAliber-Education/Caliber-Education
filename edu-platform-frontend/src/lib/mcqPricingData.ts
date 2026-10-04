@@ -75,6 +75,11 @@ export interface MCQCartCalculation {
   upsellRecommendation?: SmartUpsellData;
 }
 
+// Levels shown as "Coming soon" on the MCQ page: no subjects, bundles or
+// checkout. Papers, the editor and everything behind them are unchanged.
+// To launch a level, remove it from this list.
+export const MCQ_COMING_SOON_LEVELS: MCQLevel[] = ["FINAL", "INTERMEDIATE"];
+
 // Display name for a stored group code. Foundation has no groups ("NONE"),
 // so its subjects show no group chip and its bundle reads "CA Foundation".
 export function mcqGroupLabel(groupName: string): string {

@@ -26,6 +26,7 @@ import {
   AlertCircle,
   CreditCard,
   RefreshCw,
+  Hourglass,
 } from "lucide-react";
 import {
   MCQLevel,
@@ -38,6 +39,7 @@ import {
   calculateMCQCartPrice,
   mcqGroupLabel,
   hasGroupChip,
+  MCQ_COMING_SOON_LEVELS,
 } from "@/lib/mcqPricingData";
 
 export default function MCQClient({
@@ -49,7 +51,11 @@ export default function MCQClient({
 }) {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
-  const [activeLevel, setActiveLevel] = useState<MCQLevel>("FINAL");
+  // Opens on the first level that's on sale (Final once every level is).
+  const [activeLevel, setActiveLevel] = useState<MCQLevel>(
+    () => (["FINAL", "INTERMEDIATE", "FOUNDATION"] as MCQLevel[]).find((l) => !MCQ_COMING_SOON_LEVELS.includes(l)) ?? "FINAL"
+  );
+  const comingSoon = MCQ_COMING_SOON_LEVELS.includes(activeLevel);
   const [searchQuery, setSearchQuery] = useState("");
   // Fetched server-side (see mcq/page.tsx) so the catalog is present in the
   // initial HTML for SEO, falling back to the seeded matrix if the server
@@ -438,6 +444,27 @@ export default function MCQClient({
           <div className="relative rounded-3xl p-8 sm:p-10 bg-gradient-to-r from-white/90 dark:from-slate-900/90 via-white/70 dark:via-slate-900/70 to-white/90 dark:to-slate-900/90 border border-white/10 backdrop-blur-2xl overflow-hidden shadow-2xl">
             <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 blur-[100px] rounded-full pointer-events-none" />
 
+            {comingSoon ? (
+              <div className="relative z-10 text-center py-6">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-500 dark:text-amber-300 text-xs font-bold mb-4">
+                  <Hourglass className="w-3.5 h-3.5" /> Coming soon
+                </div>
+                <h1 className="text-2xl sm:text-4xl font-extrabold text-ink-navy dark:text-white font-heading tracking-tight leading-tight">
+                  {levelBadges[activeLevel].label} MCQs are coming soon
+                </h1>
+                <p className="mt-3 text-sm text-slate-600 dark:text-slate-300/80 leading-relaxed max-w-xl mx-auto">
+                  We&apos;re putting the finishing touches on the {levelBadges[activeLevel].label} test series. Check back soon.
+                </p>
+                {!MCQ_COMING_SOON_LEVELS.includes("FOUNDATION") && (
+                  <button
+                    onClick={() => setActiveLevel("FOUNDATION")}
+                    className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 text-slate-950 text-sm font-bold hover:bg-emerald-400 transition-colors"
+                  >
+                    Explore CA Foundation MCQs <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ) : (
             <div className="flex flex-col lg:flex-row items-center justify-between gap-8 relative z-10">
               <div className="max-w-xl">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold mb-3">
@@ -473,7 +500,7 @@ export default function MCQClient({
                       >
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
-                            {b.badge || b.groupName}
+                            {b.badge || mcqGroupLabel(b.groupName)}
                           </span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">{subCount} Subjects</span>
                         </div>
@@ -494,6 +521,7 @@ export default function MCQClient({
                   })}
               </div>
             </div>
+            )}
           </div>
         </div>
       </section>
@@ -520,6 +548,11 @@ export default function MCQClient({
                     />
                   )}
                   <span className="relative z-10">{levelBadges[level].label}</span>
+                  {MCQ_COMING_SOON_LEVELS.includes(level) && (
+                    <span className={`relative z-10 ml-1.5 align-middle text-[9px] font-black uppercase tracking-wider ${isActive ? "text-slate-900/70" : "text-amber-500"}`}>
+                      Soon
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -551,6 +584,7 @@ export default function MCQClient({
       </section>
 
       {/* ─── Main Catalog: Flat Subject Listing (Glassmorphism Cards) ─── */}
+      {!comingSoon && (
       <section className="py-12 max-w-7xl mx-auto px-6 sm:px-8">
         {/* Section Header */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 pb-4 border-b border-white/5">
@@ -712,6 +746,7 @@ export default function MCQClient({
           </div>
         )}
       </section>
+      )}
 
 
 
