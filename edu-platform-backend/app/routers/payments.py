@@ -18,6 +18,7 @@ from app.core.email import send_email
 from app.core.limiter import limiter
 from app.dependencies import get_current_user, require_admin
 from app.schemas.payments import CreateOrderRequest, VerifyPaymentRequest
+from app.routers import scholarship
 from app.routers.mcq import calculate_mcq_cart
 from app.routers.test_series import calculate_test_series_cart
 
@@ -28,6 +29,11 @@ class CreateMCQOrderRequest(BaseModel):
     level: str
     subjectIds: list[str]
     duration: str = "1_month"
+    couponCode: Optional[str] = None
+
+
+class CreateScholarshipOrderRequest(BaseModel):
+    paperId: str
     couponCode: Optional[str] = None
 
 
@@ -605,6 +611,82 @@ async def create_mcq_order(
     }
 
 
+def _scholarship_checkout(db: Client, paper_id: str, user_id: str, coupon_code: Optional[str]) -> dict:
+    """Price and payment row for one Scholarship Test registration. The
+    grant goes through _apply_mcq_grant like any MCQ purchase ("mcq-" utr),
+    as a lifetime mcq_enrollments row for scholarship.access_code(paper)."""
+    rows = db.table("mcq_papers").select("*").eq("id", paper_id).execute().data or []
+    paper = rows[0] if rows else None
+    if not scholarship.is_scholarship(paper) or paper.get("status") != "published":
+        raise HTTPException(status_code=404, detail="This Scholarship Test isn't open.")
+    price = float(paper.get("price") or 0)
+    if price <= 0:
+        raise HTTPException(status_code=400, detail="This Scholarship Test has no price set yet.")
+    if scholarship.has_access(db, user_id, paper_id):
+        raise HTTPException(status_code=409, detail="You're already registered for this test.")
+    coupon, coupon_discount, affiliate_id, commission_amount = _resolve_coupon(
+        db, coupon_code, "mcq-scholarship", user_id, price
+    )
+    final_price = max(0.0, price - coupon_discount)
+    return {
+        "paper": paper,
+        "price": price,
+        "final_price": final_price,
+        "coupon": coupon,
+        "row": {
+            "user_id": user_id,
+            "course_id": None,
+            # "lifetime": _apply_mcq_grant gives no expiry for an unknown duration.
+            "utr_number": f"mcq-scholarship-lifetime|{scholarship.access_code(paper_id)}|{uuid.uuid4().hex[:8]}",
+            "amount": final_price,
+            "original_amount": price,
+            "discount_amount": price - final_price,
+            "coupon_id": coupon["id"] if coupon else None,
+            "affiliate_id": affiliate_id,
+            "commission_amount": commission_amount,
+            "status": "pending",
+        },
+    }
+
+
+@router.post("/create-scholarship-order", status_code=201)
+@limiter.limit("10/minute")
+async def create_scholarship_order(
+    request: Request,
+    body: CreateScholarshipOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    settings = get_settings()
+    co = _scholarship_checkout(db, body.paperId, current_user["id"], body.couponCode)
+    amount_paise = int(round(co["final_price"] * 100))
+    rzp = _get_razorpay_client()
+    if rzp:
+        try:
+            order = rzp.order.create({
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": f"scholar_{body.paperId[:20]}",
+                "notes": {"type": "scholarship_test", "paper_id": body.paperId, "user_id": current_user["id"]},
+            })
+            order_id = order["id"]
+        except Exception as e:
+            print(f"Razorpay API Error during scholarship order, falling back to dummy ID: {e}")
+            order_id = f"order_SCH_FALLBACK_{uuid.uuid4().hex[:8].upper()}"
+    else:
+        order_id = f"order_SCH_{uuid.uuid4().hex[:12].upper()}"
+    db.table("payments").insert({**co["row"], "razorpay_order_id": order_id}).execute()
+    return {
+        "orderId": order_id,
+        "amount": amount_paise,
+        "currency": "INR",
+        "key": settings.razorpay_key_id or "rzp_test_demo",
+        "originalAmount": int(round(co["price"] * 100)),
+        "finalAmount": amount_paise,
+        "couponCode": co["coupon"]["code"] if co["coupon"] else None,
+    }
+
+
 @router.post("/mock-confirm-mcq")
 async def mock_confirm_mcq(
     body: VerifyPaymentRequest,
@@ -797,6 +879,9 @@ async def _apply_mcq_grant(db: Client, order_id: str, user_id: str, rzp_pay: str
                 to_email=to_email,
                 subject="Payment confirmed — Caliber Education",
                 html_content=(
+                    "<p>Hi,</p><p>Your Scholarship Test registration is confirmed. You can take the "
+                    "test from the MCQ page.</p><p>All the best!</p>"
+                    if scholarship.ACCESS_PREFIX in (payment_row.get("utr_number") or "") else
                     "<p>Hi,</p><p>Your MCQ test series payment has been verified and your selected "
                     "subjects are now unlocked.</p><p>Log in to your dashboard to get started.</p>"
                 ),
@@ -1050,6 +1135,12 @@ class SubmitManualMCQRequest(CreateMCQOrderRequest):
     payerName: str
 
 
+class SubmitManualScholarshipRequest(CreateScholarshipOrderRequest):
+    upiReference: str
+    payerUpiId: str
+    payerName: str
+
+
 class SubmitManualTestSeriesRequest(CreateTestSeriesOrderRequest):
     upiReference: str
     payerUpiId: str
@@ -1219,6 +1310,26 @@ async def submit_manual_mcq(
         "appliedBundle": calc.get("applied_bundle_title"),
         "couponCode": coupon["code"] if coupon else None,
         "message": "Payment submitted for verification. You'll get access once our team confirms it.",
+    }
+
+
+@router.post("/submit-manual-scholarship", status_code=201)
+@limiter.limit("10/minute")
+async def submit_manual_scholarship(
+    request: Request,
+    body: SubmitManualScholarshipRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    """Manual-UPI equivalent of create_scholarship_order; access comes when an
+    admin approves the payment (Admin → Payments), like other MCQ purchases."""
+    co = _scholarship_checkout(db, body.paperId, current_user["id"], body.couponCode)
+    row = {**co["row"], "razorpay_order_id": f"manual_{uuid.uuid4().hex}"}
+    _insert_manual_payment(db, row, body.upiReference, body.payerUpiId, body.payerName)
+    return {
+        "success": True,
+        "amount": co["final_price"],
+        "message": "Payment submitted for verification. You'll be able to take the test once our team confirms it.",
     }
 
 

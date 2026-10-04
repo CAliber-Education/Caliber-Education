@@ -3,6 +3,7 @@
 import React, { Fragment, useEffect, useState, useRef, createContext, useContext } from "react";
 import MCQStudio from "./components/MCQStudio";
 import FreeResourcesAdmin from "./components/FreeResourcesAdmin";
+import ScholarshipLeaderboardAdmin from "./components/ScholarshipLeaderboardAdmin";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
@@ -134,7 +135,7 @@ function AccessDenied() {
   );
 }
 
-type AdminTab = "payments" | "users" | "mcq" | "mcq_v2" | "series" | "courses" | "evaluations" | "coupons" | "affiliates" | "free_resources";
+type AdminTab = "payments" | "users" | "mcq" | "mcq_v2" | "series" | "courses" | "evaluations" | "coupons" | "affiliates" | "free_resources" | "leaderboard";
 
 interface PendingEvaluation {
   id: string;
@@ -543,6 +544,7 @@ function AdminDashboard() {
     { id: "coupons", label: "Coupons" },
     { id: "affiliates", label: "Affiliates" },
     { id: "mcq_v2", label: "MCQ Hierarchy" },
+    { id: "leaderboard", label: "Leaderboard" },
     { id: "test_series" as any, label: "Test Series" },
     { id: "free_resources", label: "Free Resources" },
     { id: "sessions" as any, label: "1:1 Sessions" },
@@ -647,6 +649,7 @@ function AdminDashboard() {
           {(activeTab as string) === "courses" && <CoursesTab key="courses" series={series} />}
           {(activeTab as string) === "test_series" && <TestSeriesTab key="test_series" />}
           {(activeTab as string) === "free_resources" && <FreeResourcesAdmin key="free_resources" />}
+          {(activeTab as string) === "leaderboard" && <ScholarshipLeaderboardAdmin key="leaderboard" />}
           {(activeTab as string) === "sessions" && <SessionsTab key="sessions" />}
           {(activeTab as string) === "evaluations" && <EvaluationsTab key="evaluations" />}
           {(activeTab as string) === "mentors" && <MentorsTab key="mentors" />}

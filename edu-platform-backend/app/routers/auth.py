@@ -340,12 +340,19 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
     attempts_data = attempts.data or []
     attempt_set_ids = list({a["set_id"] for a in attempts_data if a.get("set_id")})
     paper_titles = {}
+    scholarship_ids = set()
     if attempt_set_ids:
         try:
-            papers = db.table("mcq_papers").select("id, title").in_("id", attempt_set_ids).execute()
+            # "*" rather than naming is_scholarship, so this still works
+            # before scholarship_test_migration.sql has been run.
+            papers = db.table("mcq_papers").select("*").in_("id", attempt_set_ids).execute()
             paper_titles = {p["id"]: p["title"] for p in (papers.data or [])}
+            scholarship_ids = {p["id"] for p in (papers.data or []) if p.get("is_scholarship")}
         except Exception:
             pass
+    # Scholarship marks stay hidden until results are published, and even
+    # then they're shown on their own result page — never in this list.
+    attempts_data = [a for a in attempts_data if a.get("set_id") not in scholarship_ids]
     for a in attempts_data:
         a["paperTitle"] = paper_titles.get(a.get("set_id"), "MCQ Paper")
 

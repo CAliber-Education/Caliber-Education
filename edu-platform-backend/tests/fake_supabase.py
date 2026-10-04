@@ -26,6 +26,7 @@ class FakeQuery:
         self._order: tuple[str, bool] | None = None
         self._single = False
         self._limit: int | None = None
+        self._range: tuple[int, int] | None = None
         self._count_mode: str | None = None
         self._pending_insert: list[dict] | None = None
         self._pending_upsert_ids: set | None = None
@@ -69,6 +70,11 @@ class FakeQuery:
 
     def limit(self, n: int):
         self._limit = n
+        return self
+
+    def range(self, start: int, end: int):
+        # PostgREST ranges are inclusive at both ends.
+        self._range = (start, end)
         return self
 
     # ── mutations ────────────────────────────────────────────────────────
@@ -139,6 +145,8 @@ class FakeQuery:
 
         count = len(rows) if self._count_mode == "exact" else None
 
+        if self._range is not None:
+            rows = rows[self._range[0]: self._range[1] + 1]
         if self._limit is not None:
             rows = rows[: self._limit]
 

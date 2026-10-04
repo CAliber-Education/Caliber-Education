@@ -25,8 +25,11 @@ import {
   Copy,
   Check,
   AlertTriangle,
-  Video
+  Video,
+  Award,
+  Hourglass
 } from "lucide-react";
+import type { ScholarshipAttempt } from "@/lib/scholarship";
 
 function calculateDaysLeft(expiryIso?: string) {
   if (!expiryIso) return null;
@@ -155,6 +158,18 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchMcqSeries();
   }, []);
+
+  // Scholarship Tests taken: no marks here, just whether results are out.
+  const [scholarshipAttempts, setScholarshipAttempts] = useState<ScholarshipAttempt[]>([]);
+  useEffect(() => {
+    if (activeTab !== "results") return;
+    const token = localStorage.getItem("caliber_jwt");
+    if (!token) return;
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/api/scholarship-tests/my-attempts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setScholarshipAttempts)
+      .catch(() => setScholarshipAttempts([]));
+  }, [activeTab]);
 
   // Re-fetch MCQ data every time user switches to the MCQs tab
   useEffect(() => {
@@ -717,6 +732,42 @@ export default function DashboardPage() {
 
           {activeTab === "results" && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+
+              {scholarshipAttempts.length > 0 && (
+                <div className="space-y-3">
+                  <div className="border-b border-line-gray-light dark:border-line-gray-dark pb-2">
+                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">Scholarship Test</h3>
+                    <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">Your rank and marks appear here once results are published.</p>
+                  </div>
+                  {scholarshipAttempts.map((a) => (
+                    <div key={a.paperId} className="flex items-center justify-between gap-3 p-4 border border-amber-500/30 rounded-xl bg-amber-50/60 dark:bg-amber-500/5 flex-wrap">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="w-9 h-9 rounded-lg bg-amber-400/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                          <Award className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <h4 className="font-heading font-bold text-sm text-ink-navy dark:text-paper truncate">{a.title}</h4>
+                          {a.submittedAt && (
+                            <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">
+                              Submitted {new Date(a.submittedAt).toLocaleDateString("en-IN")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {a.resultsPublished ? (
+                        <Link href={`/scholarship/${a.paperId}/result`}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-amber-500 text-slate-950 rounded-lg hover:bg-amber-400 transition-colors">
+                          View result analysis <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-400">
+                          <Hourglass className="w-3.5 h-3.5" /> Result coming soon
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2 flex-wrap gap-2">

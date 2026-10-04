@@ -8,6 +8,7 @@ from app.core.cache import cached
 from app.core.database import get_db
 from app.core.limiter import limiter
 from app.dependencies import get_current_user
+from app.routers import scholarship
 from app.schemas.mcq import (
     CalculateMCQPriceRequest,
     CalculateMCQPriceResponse,
@@ -294,7 +295,8 @@ async def get_series(series_id: str, db: Client = Depends(get_db)):
     # also handed every logged-in student an "Attempt Set" button for it —
     # drafts include MCQ editors' unreviewed work, so they must not surface.
     papers = db.table("mcq_papers").select("*").eq("subject_code", series_id).eq("status", "published").execute()
-    paper_rows = papers.data or []
+    # Scholarship tests are sold on their own, not inside a subject.
+    paper_rows = [p for p in (papers.data or []) if not scholarship.is_scholarship(p)]
     paper_ids = [p["id"] for p in paper_rows]
 
     # Batched instead of one exam_sections + one questions query per paper —
@@ -358,7 +360,7 @@ async def get_mcq_catalog(
             query = query.eq("test_type", test_type)
 
         sets_res = query.order("created_at", desc=True).execute()
-        sets_data = sets_res.data or []
+        sets_data = [p for p in (sets_res.data or []) if not scholarship.is_scholarship(p)]
 
         # Batched instead of 2 extra round trips (exam_sections + questions
         # count) per set — same fix as mcq/[seriesId]'s get_series.
@@ -435,6 +437,9 @@ async def _has_mcq_paper_access(current_user: dict, paper: dict, db: Client) -> 
     storefront id, which is what mcq_enrollments.subject_code stores)."""
     if current_user.get("role") in _PREVIEW_ROLES:
         return True
+    if scholarship.is_scholarship(paper):
+        # Bought per paper, not per subject.
+        return scholarship.has_access(db, current_user["id"], paper["id"])
 
     subject_code = (paper.get("subject_code") or "").strip()
     level = (paper.get("level") or "").strip().upper()
@@ -475,6 +480,12 @@ async def _has_mcq_paper_access(current_user: dict, paper: dict, db: Client) -> 
     return False
 
 
+def _locked_message(paper: dict) -> str:
+    if scholarship.is_scholarship(paper):
+        return "Register for the Scholarship Test to take it."
+    return "Purchase this subject to access this test"
+
+
 def _sorted_by_order_index(rows: list) -> list:
     """Defense-in-depth: explicitly sort by order_index in Python even though
     the query already requests .order("order_index"), so ordering is never
@@ -499,9 +510,9 @@ async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), 
         raise HTTPException(status_code=404, detail="Quiz set not found")
     _hide_unpublished(current_user, mcq_set.data)
 
-    if mcq_set.data.get("is_locked"):
+    if mcq_set.data.get("is_locked") or scholarship.is_scholarship(mcq_set.data):
         if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
-            raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
+            raise HTTPException(status_code=403, detail=_locked_message(mcq_set.data))
 
     # Fetch sections
     sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).order("order_index").execute()
@@ -610,9 +621,9 @@ async def start_attempt(
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="Quiz set not found")
     _hide_unpublished(current_user, mcq_set.data)
-    if mcq_set.data.get("is_locked"):
+    if mcq_set.data.get("is_locked") or scholarship.is_scholarship(mcq_set.data):
         if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
-            raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
+            raise HTTPException(status_code=403, detail=_locked_message(mcq_set.data))
 
     def _find_in_progress():
         return (
@@ -635,7 +646,17 @@ async def start_attempt(
     # unlimited attempts regardless of what the admin configured.
     allow_retake = bool(mcq_set.data.get("allow_retake", True))
     max_attempts = mcq_set.data.get("max_attempts")
-    if not allow_retake or max_attempts:
+    if scholarship.is_scholarship(mcq_set.data) and current_user.get("role") not in _PREVIEW_ROLES:
+        # One attempt, whatever the paper's retake settings say. Staff can
+        # retake to try it out; their attempts aren't ranked.
+        taken = (
+            db.table("mcq_attempt_sessions").select("id")
+            .eq("user_id", user_id).eq("set_id", set_id).eq("status", "submitted")
+            .limit(1).execute().data
+        )
+        if taken:
+            raise HTTPException(status_code=403, detail="You've already taken this test. Your result will appear in your dashboard once it's published.")
+    elif not allow_retake or max_attempts:
         submitted_count_res = (
             db.table("mcq_attempt_sessions")
             .select("id", count="exact")
@@ -741,9 +762,9 @@ async def submit_quiz_v2(
     # Same entitlement check get_quiz already applies at retrieval time — a
     # student must not be able to call submit-v2 directly on a locked/
     # unpurchased paper and receive the full answer key in the response.
-    if mcq_set.data.get("is_locked"):
+    if mcq_set.data.get("is_locked") or scholarship.is_scholarship(mcq_set.data):
         if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
-            raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
+            raise HTTPException(status_code=403, detail=_locked_message(mcq_set.data))
 
     # attemptId is required (not just optional-and-trusted-if-present) —
     # without it this call used to skip all ownership/deadline checks and
@@ -962,6 +983,11 @@ async def submit_quiz_v2(
         except Exception:
             pass
 
+    # Scholarship test: the attempt is stored above, but marks, answers and
+    # rank stay hidden until an admin publishes the results.
+    if scholarship.is_scholarship(mcq_set.data):
+        return {"setId": set_id, "resultPending": True}
+
     # Calculate Rank & Percentile
     try:
         better = (
@@ -1024,6 +1050,9 @@ async def get_leaderboard(
     db: Client = Depends(get_db),
 ):
     """Returns top 20 attempts sorted by score desc, then time asc."""
+    paper = db.table("mcq_papers").select("*").eq("id", set_id).execute().data or []
+    if paper and scholarship.is_scholarship(paper[0]):
+        return []  # ranks are only shown to admins (Admin → Leaderboard)
     attempts = (
         db.table("quiz_attempts")
         .select("user_id, score, elapsed_seconds")

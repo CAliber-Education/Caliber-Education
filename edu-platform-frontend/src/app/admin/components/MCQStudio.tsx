@@ -74,6 +74,10 @@ export interface MCQPaper {
   sectionCount?: number;
   questionCount?: number;
   createdByEmail?: string | null; // set when an MCQ editor created it
+  // All India Scholarship Test: paid per paper, one attempt, results hidden
+  // until published from Admin → Leaderboard.
+  isScholarship?: boolean;
+  price?: number;
 }
 
 // Master Data
@@ -239,7 +243,9 @@ export default function MCQStudio({ series }: { series: any[] }) {
                 </div>
                 <div className="flex items-center text-sm text-slate dark:text-paper/70">
                   <span className="w-20 font-medium">Type:</span>
-                  <span className="text-xs border border-line-gray-light dark:border-line-gray-dark px-2 py-0.5 rounded">{(p.testType || "FULL_SUBJECT").replace("_", " ")}</span>
+                  {p.isScholarship
+                    ? <span className="text-xs font-bold bg-amber-400/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded">SCHOLARSHIP TEST · ₹{p.price}</span>
+                    : <span className="text-xs border border-line-gray-light dark:border-line-gray-dark px-2 py-0.5 rounded">{(p.testType || "FULL_SUBJECT").replace("_", " ")}</span>}
                 </div>
               </div>
 
@@ -301,7 +307,8 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
 
   async function handleSave() {
     if (!data.title.trim()) { setToast({ type: "error", message: "Give this paper a title before saving." }); return; }
-    if (!data.subjectCode) { setToast({ type: "error", message: "Select a subject before saving — the paper can't be saved without one." }); return; }
+    if (data.isScholarship && !(Number(data.price) > 0)) { setToast({ type: "error", message: "Set the Scholarship Test's price (e.g. 99) before saving." }); return; }
+    if (!data.subjectCode && !data.isScholarship) { setToast({ type: "error", message: "Select a subject before saving — the paper can't be saved without one." }); return; }
 
     let questionNumber = 0;
     for (const sec of data.sections || []) {
@@ -407,6 +414,25 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
                   {TEST_TYPES.map(t => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
                 </select>
               </div>
+            </div>
+            <div className={`rounded-xl border p-4 space-y-3 ${data.isScholarship ? "border-amber-500/50 bg-amber-500/5" : "border-line-gray-light dark:border-line-gray-dark"}`}>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input type="checkbox" className="mt-1 w-4 h-4 accent-amber-500" checked={!!data.isScholarship}
+                  onChange={e => setData({ ...data, isScholarship: e.target.checked, price: e.target.checked && !data.price ? 99 : data.price })} />
+                <span>
+                  <span className="block text-sm font-bold text-ink-navy dark:text-paper">Scholarship Test</span>
+                  <span className="block text-xs text-slate dark:text-paper/60">
+                    Sold on its own at the top of the MCQ page. One attempt per student, and they see &quot;result coming soon&quot; instead of marks.
+                    Rank everyone and publish results from Admin → Leaderboard.
+                  </span>
+                </span>
+              </label>
+              {data.isScholarship && (
+                <div className="max-w-[200px]">
+                  <label className="block text-xs font-bold text-slate uppercase mb-1">Price (₹)</label>
+                  <input type="number" min={1} className={inp} value={data.price ?? ""} onChange={e => setData({ ...data, price: parseFloat(e.target.value) || 0 })} />
+                </div>
+              )}
             </div>
             {data.status === "draft" && (
               <p className="text-[11px] font-semibold text-amber-600 bg-amber-500/10 rounded-lg px-3 py-2">

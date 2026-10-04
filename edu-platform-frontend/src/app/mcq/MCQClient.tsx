@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
 import { UpiPaymentModal, type UpiSubmitDetails } from "@/components/UpiPaymentModal";
+import ScholarshipSection from "./ScholarshipSection";
 import {
   Search,
   Zap,
@@ -435,6 +436,8 @@ export default function MCQClient({
         itemLabel={`${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`}
         onSubmit={handleUpiSubmit}
       />
+      <ScholarshipSection />
+
       {/* ─── Top High-Value Bundle Recommendation Header ─── */}
       <section className="relative pt-24 pb-8 overflow-hidden">
         {/* Ambient Gradient Glows */}

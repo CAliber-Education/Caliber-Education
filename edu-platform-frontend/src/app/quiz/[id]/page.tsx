@@ -10,7 +10,7 @@ import {
 import { AnswerRevealOption, ReviewCard } from "@/components/AnswerReveal";
 import {
   ArrowLeft, ArrowRight, Clock, LayoutDashboard, RotateCcw, Trophy,
-  SkipForward, AlertCircle, Sun, Moon
+  SkipForward, AlertCircle, Sun, Moon, Hourglass
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useTestGuard } from "@/context/TestGuardContext";
@@ -73,7 +73,7 @@ interface LeaderboardEntry {
   isUser: boolean;
 }
 
-type QuizPhase = "in-progress" | "submitting" | "results";
+type QuizPhase = "in-progress" | "submitting" | "results" | "result-pending";
 
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -134,7 +134,9 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
           body: JSON.stringify({ questionOrder: order }),
         });
         if (!res.ok) {
-          setAttemptError("Couldn't start this attempt. Please try again.");
+          // A 403 says why (e.g. a one-attempt Scholarship Test already taken).
+          const err = res.status === 403 ? await res.json().catch(() => ({})) : {};
+          setAttemptError(err.detail || "Couldn't start this attempt. Please try again.");
           return;
         }
         const data: AttemptStartResponse = await res.json();
@@ -505,8 +507,13 @@ function QuizEngine({ paper, initialAttempt }: { paper: MCQPaper; initialAttempt
       if (!res.ok) {
         throw new Error("Server rejected the submission");
       }
-      const data: SubmissionResult = await res.json();
-      setSubmissionResult(data);
+      const data = await res.json();
+      // Scholarship Test: marks and rank stay hidden until results are published.
+      if (data.resultPending) {
+        setPhase("result-pending");
+        return;
+      }
+      setSubmissionResult(data as SubmissionResult);
       setPhase("results");
 
       // Best-effort — the results view works fine without it, just shows
@@ -583,6 +590,25 @@ function QuizEngine({ paper, initialAttempt }: { paper: MCQPaper; initialAttempt
 
   if (phase === "submitting") {
     return <QuizLoadingState label="Submitting your attempt..." />;
+  }
+
+  if (phase === "result-pending") {
+    return (
+      <div className="pt-32 pb-20 px-4 text-center max-w-lg mx-auto">
+        <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-amber-400/15 text-amber-500 flex items-center justify-center">
+          <Hourglass className="w-7 h-7" />
+        </div>
+        <h2 className="text-2xl font-extrabold font-heading mb-3 text-ink-navy dark:text-paper">Your test is submitted</h2>
+        <p className="text-slate dark:text-paper/70 mb-2">Your result will come soon.</p>
+        <p className="text-sm text-slate dark:text-paper/60 mb-8">
+          Once it&apos;s out, you can see your rank, marks and answers in your dashboard.
+        </p>
+        <Link href="/dashboard?tab=results"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-sm font-bold hover:opacity-90 transition-opacity">
+          <LayoutDashboard className="w-4 h-4" /> Go to dashboard
+        </Link>
+      </div>
+    );
   }
 
   return (
@@ -837,7 +863,7 @@ function QuizEngine({ paper, initialAttempt }: { paper: MCQPaper; initialAttempt
 
               <div className="mt-8 pt-4 border-t border-line-gray-light dark:border-line-gray-dark">
                 <p className="text-center text-[10px] text-slate dark:text-paper/40 bg-line-gray-light/30 dark:bg-line-gray-dark/30 p-2 rounded-lg">
-                  Submit test anytime. Unanswered questions count as incorrect.
+                  Submit test anytime. Unanswered questions score 0 — only wrong answers lose marks.
                 </p>
               </div>
             </div>
@@ -870,7 +896,7 @@ function QuizEngine({ paper, initialAttempt }: { paper: MCQPaper; initialAttempt
                     {skippedCount} unanswered question{skippedCount !== 1 ? "s" : ""}
                   </h3>
                   <p className="text-xs text-slate dark:text-paper/60 mt-1 leading-relaxed">
-                    You have skipped {skippedCount} question{skippedCount !== 1 ? "s" : ""}. Skipped questions count as incorrect. You can go back and answer them, or submit now.
+                    You have skipped {skippedCount} question{skippedCount !== 1 ? "s" : ""}. Skipped questions score 0 (no negative marks). You can go back and answer them, or submit now.
                   </p>
                 </div>
               </div>

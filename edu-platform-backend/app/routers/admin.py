@@ -244,6 +244,11 @@ async def list_payments(
     if all_mcq_subject_ids:
         rows = db.table("mcq_subjects").select("id, name").in_("id", list(all_mcq_subject_ids)).execute().data or []
         mcq_subject_map = {r["id"]: r["name"] for r in rows}
+        # Scholarship Test registrations pack "scholarship:<paper id>".
+        scholarship_papers = [sid.split(":", 1)[1] for sid in all_mcq_subject_ids if sid.startswith("scholarship:")]
+        if scholarship_papers:
+            rows = db.table("mcq_papers").select("id, title").in_("id", scholarship_papers).execute().data or []
+            mcq_subject_map.update({f"scholarship:{r['id']}": r["title"] for r in rows})
 
     ts_subject_map: dict = {}
     if all_ts_subject_ids:
@@ -277,6 +282,8 @@ async def list_payments(
                 # list ambiguous about where one subject ends and the next begins.
                 names = [mcq_subject_map.get(sid, sid) for sid in sub_ids]
                 label = f"MCQ {level}".strip() + (f" · {duration}" if duration else "")
+                if level == "SCHOLARSHIP":
+                    label = "Scholarship Test"
                 course_title = f"{label}: {'; '.join(names)}" if names else (label or "Multiple/Bundle")
             elif p["id"] in packed_ts_by_payment:
                 prefix, sub_ids = packed_ts_by_payment[p["id"]]
@@ -1476,6 +1483,7 @@ async def admin_list_sets(
                 "questionCount": q_count,
                 "createdBy": s.get("created_by"),
                 "createdByEmail": creator_email.get(s.get("created_by")),
+                "isScholarship": bool(s.get("is_scholarship")),
             })
         return enriched
     except Exception as e:
@@ -1549,6 +1557,8 @@ async def admin_get_set(
         "price": float(s.get("price") or 0.0),
         "description": s.get("description", ""),
         "subject": s.get("subject", ""),
+        "isScholarship": bool(s.get("is_scholarship")),
+        "resultsPublishedAt": s.get("results_published_at"),
         "sections": enriched_sections,
     }
 
@@ -1571,6 +1581,8 @@ async def admin_upsert_set(
         set_id = str(uuid.uuid4())
 
     subject_code = (body.get("subjectCode") or body.get("subject_code") or "").strip()
+    if not subject_code and body.get("isScholarship"):
+        subject_code = "SCHOLARSHIP"  # sold per paper, not under a subject
     if not subject_code:
         raise HTTPException(status_code=400, detail="Select a subject before saving this paper.")
 
@@ -1635,9 +1647,35 @@ async def admin_upsert_set(
         # upsert leaving an omitted column untouched.
         data["created_by"] = author["id"]
 
+    # Scholarship test (see routers/scholarship.py): sold per paper, one
+    # attempt, results hidden until published from Admin → Leaderboard.
+    wants_scholarship = bool(body.get("isScholarship"))
+    if wants_scholarship:
+        try:
+            price = float(body.get("price") or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if price <= 0:
+            raise HTTPException(status_code=400, detail="Set the Scholarship Test's price (e.g. 99).")
+        data.update({"is_scholarship": True, "is_locked": True, "allow_retake": False, "max_attempts": 1, "price": price})
+    elif "isScholarship" in body:
+        data["is_scholarship"] = False
+
     # 1. Upsert the Set Wrapper
     try:
-        result = db.table("mcq_papers").upsert(data).execute()
+        try:
+            result = db.table("mcq_papers").upsert(data).execute()
+        except PostgrestAPIError as e:
+            # Before scholarship_test_migration.sql the column doesn't exist:
+            # a normal paper still saves; a scholarship one can't yet.
+            if e.code not in ("42703", "PGRST204") or "is_scholarship" not in data:
+                raise
+            if wants_scholarship:
+                raise HTTPException(status_code=503, detail="Run supabase/scholarship_test_migration.sql in Supabase before creating a Scholarship Test.")
+            data.pop("is_scholarship")
+            result = db.table("mcq_papers").upsert(data).execute()
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"MCQ SAVE ERROR: {e}")
         raise HTTPException(status_code=500, detail="Failed to save paper. Please check every field and try again.")
