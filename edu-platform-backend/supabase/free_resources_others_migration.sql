@@ -4,7 +4,7 @@
 -- Safe to re-run.
 --
 -- Free Resources now also lists entries that aren't MCQ subjects: an
--- "Others" section in every level, and CA Foundation's Accounting and
+-- "Others" tab, and CA Foundation's Accounting and
 -- Business Laws (which have no MCQ product). They're defined in the backend
 -- (EXTRA_SUBJECTS in app/routers/free_resources.py), so links for them can't
 -- point at a row in mcq_subjects. This drops that one foreign key; nothing
@@ -16,3 +16,4 @@
 
 ALTER TABLE public.free_resources
   DROP CONSTRAINT IF EXISTS free_resources_subject_id_fkey;
+pus

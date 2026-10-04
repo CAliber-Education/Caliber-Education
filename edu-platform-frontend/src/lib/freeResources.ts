@@ -1,7 +1,8 @@
 // Shared by the public /free-resources page and Admin → Free Resources.
 // Shapes mirror GET /api/free-resources (edu-platform-backend/app/routers/free_resources.py).
 
-export type LevelCode = "FINAL" | "INTERMEDIATE" | "FOUNDATION";
+// OTHERS isn't a CA level: it's the tab for links that don't belong to one.
+export type LevelCode = "FINAL" | "INTERMEDIATE" | "FOUNDATION" | "OTHERS";
 
 export interface FreeResource {
   id: string;
@@ -28,6 +29,7 @@ export const LEVEL_TABS: { level: LevelCode; label: string }[] = [
   { level: "FINAL", label: "CA Final" },
   { level: "INTERMEDIATE", label: "CA Inter" },
   { level: "FOUNDATION", label: "CA Foundation" },
+  { level: "OTHERS", label: "Others" },
 ];
 
 export function groupLabel(groupName: string): string {

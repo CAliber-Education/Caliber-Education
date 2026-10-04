@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, ExternalLink, FolderOpen, FileText, PlayCircle, Link2 } from "lucide-react";
 import {
   LEVEL_TABS, groupLabel, describeLink, isSafeUrl,
-  type FreeResourceLevel, type LevelCode, type LinkKind,
+  type FreeResource, type FreeResourceLevel, type LevelCode, type LinkKind,
 } from "@/lib/freeResources";
 
 export type { FreeResourceLevel };
@@ -23,6 +23,7 @@ export default function FreeResourcesClient({ levels }: { levels: FreeResourceLe
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   const subjects = levels?.find((l) => l.level === activeLevel)?.subjects ?? [];
+  const otherLinks = subjects.flatMap((s) => s.resources).filter((r) => isSafeUrl(r.url));
 
   function toggle(id: string) {
     setOpen((prev) => {
@@ -70,6 +71,15 @@ export default function FreeResourcesClient({ levels }: { levels: FreeResourceLe
           <p className="text-center py-16 text-sm text-slate dark:text-paper/60">
             We couldn&apos;t load the resources right now. Please refresh the page in a moment.
           </p>
+        ) : activeLevel === "OTHERS" ? (
+          // A single list, not an accordion: nothing to pick between here.
+          otherLinks.length === 0 ? (
+            <p className="text-center py-16 text-sm text-slate dark:text-paper/60">Nothing here yet — check back soon.</p>
+          ) : (
+            <div className="rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 px-3 sm:px-4 py-2">
+              <LinkList links={otherLinks} />
+            </div>
+          )
         ) : subjects.length === 0 ? (
           <p className="text-center py-16 text-sm text-slate dark:text-paper/60">No subjects for this level yet.</p>
         ) : (
@@ -123,33 +133,7 @@ export default function FreeResourcesClient({ levels }: { levels: FreeResourceLe
                               Nothing here yet — check back soon.
                             </p>
                           ) : (
-                            <ul className="divide-y divide-line-gray-light dark:divide-line-gray-dark">
-                              {links.map((r) => {
-                                const info = describeLink(r.url);
-                                const Icon = KIND_ICON[info.kind];
-                                return (
-                                  <li key={r.id}>
-                                    <a
-                                      href={r.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="group flex items-center gap-3 px-2 py-3 rounded-lg hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 transition-colors"
-                                    >
-                                      <span className="w-9 h-9 rounded-lg bg-amber-400/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-                                        <Icon className="w-4 h-4" />
-                                      </span>
-                                      <span className="flex-1 min-w-0">
-                                        <span className="block text-sm font-semibold text-ink-navy dark:text-paper truncate">{r.title}</span>
-                                        <span className="block text-xs text-slate dark:text-paper/50 truncate">{info.label}</span>
-                                      </span>
-                                      <span className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper opacity-60 group-hover:opacity-100 transition-opacity">
-                                        Open <ExternalLink className="w-3.5 h-3.5" />
-                                      </span>
-                                    </a>
-                                  </li>
-                                );
-                              })}
-                            </ul>
+                            <LinkList links={links} />
                           )}
                         </div>
                       </motion.div>
@@ -162,5 +146,37 @@ export default function FreeResourcesClient({ levels }: { levels: FreeResourceLe
         )}
       </div>
     </div>
+  );
+}
+
+function LinkList({ links }: { links: FreeResource[] }) {
+  return (
+    <ul className="divide-y divide-line-gray-light dark:divide-line-gray-dark">
+      {links.map((r) => {
+        const info = describeLink(r.url);
+        const Icon = KIND_ICON[info.kind];
+        return (
+          <li key={r.id}>
+            <a
+              href={r.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex items-center gap-3 px-2 py-3 rounded-lg hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 transition-colors"
+            >
+              <span className="w-9 h-9 rounded-lg bg-amber-400/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Icon className="w-4 h-4" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold text-ink-navy dark:text-paper truncate">{r.title}</span>
+                <span className="block text-xs text-slate dark:text-paper/50 truncate">{info.label}</span>
+              </span>
+              <span className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper opacity-60 group-hover:opacity-100 transition-opacity">
+                Open <ExternalLink className="w-3.5 h-3.5" />
+              </span>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

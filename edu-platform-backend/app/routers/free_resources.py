@@ -4,7 +4,7 @@ on the public /free-resources page and managed by admins.
 Subjects come from the MCQ catalog (mcq_subjects), so the page always lists
 every subject the storefront sells, grouped by level, even before an admin
 has added a link for it. EXTRA_SUBJECTS adds the ones that exist only here:
-Foundation papers with no MCQ product, and an "Others" entry per level.
+Foundation papers with no MCQ product, and the "Others" tab.
 Tables: supabase/free_resources_migration.sql, free_resources_others_migration.sql.
 """
 from datetime import datetime, timezone
@@ -23,17 +23,16 @@ router = APIRouter(prefix="/api/free-resources", tags=["Free Resources"])
 admin_router = APIRouter(prefix="/api/admin/free-resources", tags=["Admin — Free Resources"])
 
 # Tab order on the page, matching the MCQ catalog's default of Final first.
-LEVEL_ORDER = ("FINAL", "INTERMEDIATE", "FOUNDATION")
+LEVEL_ORDER = ("FINAL", "INTERMEDIATE", "FOUNDATION", "OTHERS")
 
 # Free-Resources-only subjects, never sold in the MCQ shop. Ids are stable:
 # links are stored against them. "first" ones go before the level's MCQ
-# subjects (CA Foundation papers 1 and 2), "Others" always goes last.
+# subjects (CA Foundation papers 1 and 2). OTHERS is its own tab on the page
+# with a single entry, for links that don't belong to one level.
 EXTRA_SUBJECTS: List[dict] = [
     {"id": "free-foundation-accounting", "level": "FOUNDATION", "name": "Accounting", "position": "first"},
     {"id": "free-foundation-laws", "level": "FOUNDATION", "name": "Business Laws", "position": "first"},
-    {"id": "free-final-others", "level": "FINAL", "name": "Others", "position": "last"},
-    {"id": "free-inter-others", "level": "INTERMEDIATE", "name": "Others", "position": "last"},
-    {"id": "free-foundation-others", "level": "FOUNDATION", "name": "Others", "position": "last"},
+    {"id": "free-others", "level": "OTHERS", "name": "Others", "position": "last"},
 ]
 _EXTRA_IDS = {s["id"] for s in EXTRA_SUBJECTS}
 
