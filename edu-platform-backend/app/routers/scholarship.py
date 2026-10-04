@@ -206,13 +206,21 @@ def ranked_attempts(db: Client, paper_id: str, questions: Optional[List[dict]] =
     return students + staff_rows
 
 
+def is_closed(paper: Optional[dict]) -> bool:
+    """Results are out, so the test is over: no longer on sale or open to
+    start. Students who took it see their result from the dashboard."""
+    return bool(paper and paper.get("results_published_at"))
+
+
 def _published_scholarship_papers(db: Client) -> List[dict]:
+    """Scholarship tests still open: published, and results not yet out."""
     try:
-        return (
+        rows = (
             db.table("mcq_papers").select("*")
             .eq("is_scholarship", True).eq("status", "published")
             .execute().data or []
         )
+        return [p for p in rows if not is_closed(p)]
     except PostgrestAPIError as e:
         if e.code in _MISSING_COLUMN_CODES:
             return []  # before the migration: simply no scholarship tests

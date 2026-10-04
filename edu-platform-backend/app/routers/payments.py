@@ -619,6 +619,8 @@ def _scholarship_checkout(db: Client, paper_id: str, user_id: str, coupon_code: 
     paper = rows[0] if rows else None
     if not scholarship.is_scholarship(paper) or paper.get("status") != "published":
         raise HTTPException(status_code=404, detail="This Scholarship Test isn't open.")
+    if scholarship.is_closed(paper):
+        raise HTTPException(status_code=404, detail="This Scholarship Test is closed — its results are out.")
     price = float(paper.get("price") or 0)
     if price <= 0:
         raise HTTPException(status_code=400, detail="This Scholarship Test has no price set yet.")

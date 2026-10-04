@@ -646,6 +646,8 @@ async def start_attempt(
     # unlimited attempts regardless of what the admin configured.
     allow_retake = bool(mcq_set.data.get("allow_retake", True))
     max_attempts = mcq_set.data.get("max_attempts")
+    if scholarship.is_closed(mcq_set.data) and current_user.get("role") not in _PREVIEW_ROLES:
+        raise HTTPException(status_code=403, detail="This Scholarship Test is closed — its results are out. If you took it, see your result in your dashboard.")
     if scholarship.is_scholarship(mcq_set.data) and current_user.get("role") not in _PREVIEW_ROLES:
         # One attempt, whatever the paper's retake settings say. Staff can
         # retake to try it out; their attempts aren't ranked.

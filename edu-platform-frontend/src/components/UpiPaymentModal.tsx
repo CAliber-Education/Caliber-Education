@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Copy, Check, ChevronDown, ShieldCheck, CheckCircle2, Loader2 } from "lucide-react";
@@ -84,7 +85,12 @@ export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: 
     }
   };
 
-  return (
+  // Rendered into <body> so no parent's stacking context (e.g. a "relative
+  // z-10" section) can trap it under the sticky level bar or navbar.
+  const isClient = useSyncExternalStore(subscribeNoop, () => true, () => false);
+  if (!isClient) return null;
+
+  return createPortal(
     <AnimatePresence>
       {open && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
@@ -243,6 +249,9 @@ export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: 
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
+
+const subscribeNoop = () => () => {};

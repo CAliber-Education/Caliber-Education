@@ -291,3 +291,24 @@ def test_staff_attempts_listed_unranked_and_their_result_opens(make_client, db):
     mine = make_client(ADMIN).get(f"/api/scholarship-tests/{PAPER}/my-result").json()
     assert mine["rank"] is None and mine["isStaff"] is True and mine["score"] == 0.0
     assert make_client(STUDENT).get(f"/api/scholarship-tests/{PAPER}/my-result").json()["rank"] == 1
+
+
+
+def test_after_results_are_out_the_test_is_off_the_mcq_page_and_closed(make_client, db):
+    _register(db, STUDENT2["id"])               # paid but never took it
+    _attempt(db, STUDENT["id"], {"q1": 0}, 10)  # took it
+    make_client(ADMIN).post(f"/api/admin/scholarship-tests/{PAPER}/publish", json={"published": True})
+
+    assert make_client(STUDENT).get("/api/scholarship-tests").json() == []
+    assert make_client(STUDENT).get("/api/scholarship-tests/mine").json() == {}
+    late = make_client(STUDENT2).post(f"/api/quizzes/{PAPER}/attempt/start", json={"questionOrder": ["q1"]})
+    assert late.status_code == 403 and "closed" in late.json()["detail"]
+    buy = make_client({"id": "student-3", "role": "student", "email": "s3@example.com"}).post(
+        "/api/payments/create-scholarship-order", json={"paperId": PAPER})
+    assert buy.status_code == 404
+    # ...while the result itself stays reachable from the dashboard.
+    assert make_client(STUDENT).get("/api/scholarship-tests/my-attempts").json()[0]["resultsPublished"] is True
+    assert make_client(STUDENT).get(f"/api/scholarship-tests/{PAPER}/my-result").status_code == 200
+    # Hiding the results again reopens it.
+    make_client(ADMIN).post(f"/api/admin/scholarship-tests/{PAPER}/publish", json={"published": False})
+    assert [t["id"] for t in make_client(STUDENT).get("/api/scholarship-tests").json()] == [PAPER]

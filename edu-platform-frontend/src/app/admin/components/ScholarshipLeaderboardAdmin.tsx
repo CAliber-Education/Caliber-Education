@@ -89,8 +89,8 @@ export default function ScholarshipLeaderboardAdmin() {
   async function setPublished(value: boolean) {
     if (!test) return;
     const msg = value
-      ? `Publish results for "${test.title}"? Every student who took it will see their rank, marks and answers in their dashboard.`
-      : `Hide the results for "${test.title}" again? Students won't be able to open their result until you publish it.`;
+      ? `Publish results for "${test.title}"? Every student who took it will see their rank, marks and answers in their dashboard, and the test will be taken off the MCQ page (no more registrations or attempts).`
+      : `Hide the results for "${test.title}" again? Students won't be able to open their result until you publish it, and the test goes back on the MCQ page.`;
     if (!window.confirm(msg)) return;
     setBusy(true);
     try {
@@ -160,8 +160,8 @@ export default function ScholarshipLeaderboardAdmin() {
               <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {test.attemptCount} student{test.attemptCount === 1 ? "" : "s"} took it
                 {test.staffAttemptCount > 0 && ` · ${test.staffAttemptCount} staff test${test.staffAttemptCount === 1 ? "" : "s"}`}</span>
               <span>₹{test.price} · {test.questionCount} questions · {test.durationMinutes} min</span>
-              <span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded-full ${test.status === "published" ? "bg-signal-emerald/10 text-signal-emerald" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60"}`}>
-                {test.status === "published" ? "Open for students" : test.status}
+              <span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded-full ${test.status === "published" && !published ? "bg-signal-emerald/10 text-signal-emerald" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60"}`}>
+                {test.status !== "published" ? test.status : published ? "Closed · off the MCQ page" : "Open for students"}
               </span>
               <span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded-full ${published ? "bg-amber-400/20 text-amber-700 dark:text-amber-300" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60"}`}>
                 {published ? `Results published ${new Date(test.resultsPublishedAt!).toLocaleDateString("en-IN")}` : "Results not published"}
