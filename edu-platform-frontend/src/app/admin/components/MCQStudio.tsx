@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Plus, Edit2, Trash2, ArrowLeft, Save, Upload, AlertCircle, FileText, Settings2, GripVertical, CheckCircle, ChevronDown } from "lucide-react";
+import { Plus, Edit2, Trash2, ArrowLeft, Save, AlertCircle, FileText, Settings2, GripVertical, CheckCircle, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Toast, type ToastState } from "@/components/Toast";
 import { useAuth } from "@/context/AuthContext";
+import ImportButtons, { type ImportResult } from "./McqImport";
 
 // -- Models matching Backend V3 Schema --
 export interface Question {
@@ -12,7 +13,9 @@ export interface Question {
   type: "normal" | "case";
   content: string;
   options: string[];
-  correct_option: number;
+  // null only for an imported question whose answer wasn't in the file —
+  // Save is blocked until one is picked.
+  correct_option: number | null;
   explanation: string;
   marks: number;
   negative_marks: number;
@@ -20,6 +23,25 @@ export interface Question {
   case_narrative?: string;
   case_group_id?: string;
   case_scenario_id?: string;
+  review?: string[]; // import notes to check; editor-only, ignored on save
+}
+
+function hasValidAnswer(q: { correct_option: number | null; options: string[] }): boolean {
+  return Number.isInteger(q.correct_option) && (q.correct_option as number) >= 0 && (q.correct_option as number) < q.options.length;
+}
+
+// Unique-match a subject named in an imported paper ("FINANCIAL REPORTING")
+// to the live catalog, at the detected level when known. Ambiguous → none.
+function matchSubject(subject: string | null, level: string | null, live: LiveSubject[]): LiveSubject | null {
+  if (!subject) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim();
+  const want = norm(subject);
+  const pool = level ? live.filter((s) => s.level === level) : live;
+  const hits = pool.filter((s) => {
+    const name = norm(s.name);
+    return name === want || norm(s.code) === want || (name.length > 3 && want.includes(name));
+  });
+  return hits.length === 1 ? hits[0] : null;
 }
 
 export interface CaseScenario {
@@ -293,6 +315,10 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
           setToast({ type: "error", message: `Question ${questionNumber} (in section "${sec.title}") has a blank answer option. Fill in every option before saving.` });
           return;
         }
+        if (!hasValidAnswer(q)) {
+          setToast({ type: "error", message: `Question ${questionNumber} (in section "${sec.title}") has no correct answer selected. Pick the right option before saving.` });
+          return;
+        }
       }
     }
 
@@ -465,53 +491,96 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
       )}
 
       {activeTab === "questions" && (
-        <QuestionsStudio data={data} setData={setData} inp={inp} setToast={setToast} />
+        <QuestionsStudio data={data} setData={setData} inp={inp} setToast={setToast} liveSubjects={liveSubjects} />
       )}
     </div>
   );
 }
 
-function QuestionsStudio({ data, setData, inp, setToast }: any) {
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+interface ImportSummary { source: string; questions: number; applied: string[]; issues: string[] }
 
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+const ANSWER_NOTE_MARKER = "pick the correct option";
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result as string;
-        const parsed = JSON.parse(text);
+// What still needs a person's eye on a question: a missing answer (live —
+// clears the moment one is picked) plus any import notes not yet checked.
+function attentionFor(q: Question): { answerNote: string | null; notes: string[] } {
+  const review = q.review || [];
+  const answerNote = hasValidAnswer(q)
+    ? null
+    : review.find((m) => m.includes(ANSWER_NOTE_MARKER)) || "No correct answer selected — pick the right option.";
+  return { answerNote, notes: review.filter((m) => !m.includes(ANSWER_NOTE_MARKER)) };
+}
 
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title && Array.isArray(parsed[0].questions)) {
-          const newSections = parsed.map((sec, sIdx) => ({
-            id: sec.id || `sec-${Date.now()}-${sIdx}`,
-            title: sec.title || `Section ${sIdx + 1}`,
-            questions: sec.questions.map((q: any, qIdx: number) => ({
-              id: q.id || `q-${Date.now()}-${sIdx}-${qIdx}`,
-              type: q.type || 'normal',
-              content: q.content || 'Missing content',
-              options: q.options || ['A', 'B', 'C', 'D'],
-              correct_option: q.correct_option !== undefined ? q.correct_option : 0,
-              explanation: q.explanation || '',
-              marks: q.marks || 1,
-              negative_marks: q.negative_marks || 0,
-              difficulty: q.difficulty || 'medium',
-              case_narrative: q.case_narrative || undefined
-            }))
-          }));
-          setData({ ...data, sections: [...(data.sections || []), ...newSections] });
-          setToast({ type: "success", message: "Successfully uploaded!" });
-        } else {
-          setToast({ type: "error", message: "Invalid JSON format." });
+function QuestionsStudio({ data, setData, inp, setToast, liveSubjects }: any) {
+  const [summary, setSummary] = useState<ImportSummary | null>(null);
+
+  // Imports (PDF or JSON) arrive already checked by the backend: answers that
+  // weren't in the file are null and flagged, never defaulted to option A.
+  function applyImport(result: ImportResult, source: string) {
+    const existing = (data.sections || []).reduce((n: number, s: ExamSection) => n + (s.questions?.length || 0), 0);
+    if (existing > 0 && !window.confirm(
+      `This paper already has ${existing} question${existing === 1 ? "" : "s"}. ` +
+      `The ${result.stats.questions} imported question${result.stats.questions === 1 ? "" : "s"} will be added after them.\n\nContinue?`
+    )) return;
+
+    const stamp = Date.now();
+    const newSections = result.sections.map((sec, sIdx) => ({
+      id: `sec-imp-${stamp}-${sIdx}`,
+      title: sec.title,
+      questions: sec.questions.map((q, qIdx) => ({
+        id: `q-imp-${stamp}-${sIdx}-${qIdx}`,
+        type: q.type,
+        content: q.content,
+        options: q.options.length ? q.options : ["", ""],
+        correct_option: q.correct_option,
+        explanation: q.explanation,
+        marks: q.marks,
+        negative_marks: q.negative_marks,
+        difficulty: q.difficulty,
+        case_narrative: q.case_narrative,
+        review: q.review,
+      })),
+    }));
+
+    // Paper details from the file only fill a fresh paper, so importing into
+    // a paper you've already set up never overwrites its settings.
+    const updates: Partial<MCQPaper> = {};
+    const applied: string[] = [];
+    const issues = [...result.issues];
+    if (existing === 0) {
+      const m = result.meta;
+      if (m.title && (!data.title?.trim() || data.title === "New Test Paper")) { updates.title = m.title; applied.push("title"); }
+      if (m.duration_minutes) { updates.durationMinutes = m.duration_minutes; applied.push(`duration (${m.duration_minutes} min)`); }
+      if (m.total_marks) {
+        updates.totalMarks = m.total_marks;
+        applied.push(`total marks (${m.total_marks})`);
+        // Untouched defaults are 40 of 100; keep that 40% rather than leave a
+        // passing mark above the paper's total.
+        if (data.passingMarks === 40 && data.totalMarks === 100) {
+          updates.passingMarks = Math.round(m.total_marks * 0.4 * 2) / 2;
+          applied.push(`passing marks (40% = ${updates.passingMarks})`);
         }
-      } catch (err) {
-        setToast({ type: "error", message: "Failed to parse JSON file." });
       }
-    };
-    reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+      const subject = matchSubject(m.subject, m.level, liveSubjects || []);
+      if (subject) {
+        Object.assign(updates, { level: subject.level, groupName: subject.group_name, subjectCode: subject.code });
+        applied.push(`subject (${subject.code} — ${subject.name})`);
+      } else if (m.subject) {
+        issues.push(`Subject "${m.subject}" wasn't recognised — set it on Hierarchy & Settings.`);
+      }
+    }
+    setData({ ...data, ...updates, sections: [...(data.sections || []), ...newSections] });
+    setSummary({ source, questions: result.stats.questions, applied, issues });
+    setToast({ type: "success", message: `Imported ${result.stats.questions} question${result.stats.questions === 1 ? "" : "s"}.` });
+  }
+
+  const needingAttention = (data.sections || []).reduce((n: number, s: ExamSection) =>
+    n + (s.questions || []).filter((q: Question) => { const a = attentionFor(q); return a.answerNote || a.notes.length; }).length, 0);
+
+  function addOption(secIdx: number, qIdx: number) {
+    const newSecs = [...data.sections];
+    newSecs[secIdx].questions[qIdx].options = [...newSecs[secIdx].questions[qIdx].options, ""];
+    setData({ ...data, sections: newSecs });
   }
 
   function addEmptySection() {
@@ -585,18 +654,31 @@ function QuestionsStudio({ data, setData, inp, setToast }: any) {
           <button onClick={addEmptySection} className="flex items-center gap-2 bg-line-gray-light dark:bg-line-gray-dark px-4 py-2 rounded-lg font-bold text-xs hover:opacity-80">
             <Plus className="w-3.5 h-3.5" /> Manual Section
           </button>
-          <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-          <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-ink-navy text-paper dark:bg-paper dark:text-ink-navy px-4 py-2 rounded-lg font-extrabold shadow-sm text-xs hover:opacity-90 transition-all">
-            <Upload className="w-3.5 h-3.5" /> Bulk Upload JSON
-          </button>
+          <ImportButtons onImported={applyImport} onError={(message) => setToast({ type: "error", message })} />
         </div>
       </div>
+
+      {summary && (
+        <div className="relative rounded-xl border border-signal-emerald/30 bg-signal-emerald/5 px-4 py-3 pr-20 text-xs space-y-1.5 text-ink-navy dark:text-paper/80">
+          <button type="button" onClick={() => setSummary(null)} className="absolute top-2.5 right-3 text-xs font-semibold text-slate hover:text-ink-navy dark:hover:text-paper">Dismiss</button>
+          <p className="font-bold text-ink-navy dark:text-paper">Imported {summary.questions} question{summary.questions === 1 ? "" : "s"} from {summary.source}.</p>
+          {needingAttention > 0 ? (
+            <p className="font-semibold text-amber-700 dark:text-amber-400">
+              {needingAttention} question{needingAttention === 1 ? " needs" : "s need"} your attention — highlighted in yellow below. Save stays blocked until each has an answer.
+            </p>
+          ) : (
+            <p className="font-semibold text-signal-emerald">Nothing flagged — still give the answers a quick check before saving.</p>
+          )}
+          {summary.applied.length > 0 && <p>Also filled in on Hierarchy &amp; Settings: {summary.applied.join(", ")}.</p>}
+          {summary.issues.map((issue) => <p key={issue} className="text-amber-700 dark:text-amber-400">⚠ {issue}</p>)}
+        </div>
+      )}
 
       <div className="space-y-4 pt-2">
         {(!data.sections || data.sections.length === 0) ? (
           <div className="text-center py-16 border-2 border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl bg-white dark:bg-line-gray-dark/20">
             <p className="text-slate dark:text-paper font-black text-lg mb-2">Paper is Currently Empty!</p>
-            <p className="text-sm text-slate/70 dark:text-paper/60 max-w-md mx-auto">Create a Manual Section or click Bulk Upload JSON to start filling it out.</p>
+            <p className="text-sm text-slate/70 dark:text-paper/60 max-w-md mx-auto">Add a section by hand, or use Import from PDF or Upload JSON to fill in the whole paper at once.</p>
           </div>
         ) : (
           data.sections.map((sec: any, idx: number) => (
@@ -630,12 +712,26 @@ function QuestionsStudio({ data, setData, inp, setToast }: any) {
                     // brand-new blocks and for blocks reloaded from the DB
                     // (where every row in the run now carries the narrative).
                     const isCaseHead = q.type === 'case' && (qIdx === 0 || sec.questions[qIdx - 1]?.type !== 'case');
+                    const { answerNote, notes } = attentionFor(q);
+                    const needsAttention = !!answerNote || notes.length > 0;
                     return (
-                    <div key={q.id} className="p-4 bg-white dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-xl space-y-4 relative group">
+                    <div key={q.id} className={`p-4 bg-white dark:bg-line-gray-dark/50 border rounded-xl space-y-4 relative group ${needsAttention ? "border-amber-400 dark:border-amber-500/70 ring-1 ring-amber-400/40" : "border-line-gray-light dark:border-line-gray-dark"}`}>
 
                       <button onClick={() => deleteQuestion(idx, qIdx)} className="absolute top-3 right-3 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-50 dark:hover:bg-red-500/20 rounded">
                         <Trash2 className="w-4 h-4" />
                       </button>
+
+                      {needsAttention && (
+                        <div className="rounded-lg bg-amber-400/10 border border-amber-400/40 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 space-y-1 mr-8">
+                          {answerNote && <p>• {answerNote}</p>}
+                          {notes.map((n) => <p key={n}>• {n}</p>)}
+                          {notes.length > 0 && (
+                            <button type="button" onClick={() => updateQuestion(idx, qIdx, 'review', [])} className="font-bold underline underline-offset-2 hover:opacity-80">
+                              Mark as checked
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       <div className="flex items-center gap-2 mb-2">
                         <span className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${q.type === 'case' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-slate/20 text-slate'}`}>{q.type === 'case' ? (isCaseHead ? 'CASE NARRATIVE + Q1' : 'CASE SUB-QUESTION') : 'NORMAL Q'}</span>
@@ -667,6 +763,11 @@ function QuestionsStudio({ data, setData, inp, setToast }: any) {
                           </div>
                         ))}
                       </div>
+                      {q.options.length < 4 && (
+                        <button type="button" onClick={() => addOption(idx, qIdx)} className="text-xs font-bold text-signal-emerald hover:underline">
+                          + Add option
+                        </button>
+                      )}
 
                       <div>
                         <label className="text-[10px] uppercase font-bold text-slate mb-1 block">Explanation (Optional)</label>

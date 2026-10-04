@@ -11,6 +11,7 @@ from app.core.limiter import limiter
 from app.routers import auth, courses, payments, mcq, sessions, tests, contact, admin, test_series
 from app.routers.coupons import router as coupons_router, admin_router as coupons_admin_router
 from app.routers.free_resources import router as free_resources_router, admin_router as free_resources_admin_router
+from app.routers.mcq_import import router as mcq_import_router
 
 settings = get_settings()
 
@@ -131,6 +132,7 @@ app.include_router(coupons_router)
 app.include_router(coupons_admin_router)
 app.include_router(free_resources_router)
 app.include_router(free_resources_admin_router)
+app.include_router(mcq_import_router)
 
 
 @app.get("/", tags=["Health"])

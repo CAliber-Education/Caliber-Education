@@ -1,6 +1,8 @@
 # Comprehensive MCQ Configuration Guide
 
-This document provides a detailed breakdown of how to construct a CA Hierarchy MCQ Test Paper. You can either construct your test seamlessly using the **Manual Form Editor** or massively accelerate the process using the **Bulk JSON Uploader**.
+This document explains how to build a CA Hierarchy MCQ Test Paper. You can type it in the **Manual Editor**, or fill in a whole paper at once with **Import from PDF** or **Upload JSON** (both on the **Sections & Questions** tab).
+
+All three work for both **normal MCQs** and **case-based MCQs**.
 
 ---
 
@@ -16,21 +18,40 @@ The manual editor has been entirely redesigned so that Case Scenarios and Normal
    * **To add a Case Study:** Click **+ Add Case Study Block**. 
      - A massive text block will appear for your reading passage/narrative.
      - Beneath that, a special **"+ Add Sub-Question"** button appears. Click it to strictly bind consecutive MCQs to that specific reading passage.
-5. **Save the Exam:** Once you have loaded your sections, hit the green **Publish** switch on the "Hierarchy & Settings" tab and click "Save Paper". 
+5. **Save the Exam:** Set **Status** on the "Hierarchy & Settings" tab (Draft keeps it hidden from students; Published makes it live) and click **Save Paper**.
 
 ---
 
-## Method 2: Bulk JSON Uploader (Fast Automation)
+## Method 2: Import from PDF (fastest)
 
-If you have 100 questions typed out by a faculty member, you can use the JSON Uploader to instantly inject the entire exam into the database.
+For a typed question paper (one where you can select the text).
 
-1. Open the **Sections & Questions** tab. 
-2. Click the shiny gold **Bulk Upload JSON** button.
-3. Select your pre-formatted `.json` file from your computer.
+1. Open **Sections & Questions** and click **Import from PDF**.
+2. Choose the **question paper PDF**. If the answers are in a separate file, also choose the **answer key PDF**.
+3. Click **Import** and wait — usually seconds. Long papers are read in parts; on the free AI plan you may see a short countdown between parts. It carries on by itself.
+4. Review, then **Save Paper**.
 
-### The Strict JSON Format Required:
+What it reads: sections, questions, options, answers (printed under each question, or from an answer key anywhere in the paper or a separate PDF), explanations, marks, and case studies. For a new, empty paper it also fills in the **title, duration, total marks and subject** on Hierarchy & Settings.
 
-The JSON file MUST be an **Array of Sections**. Each section contains a `title` and an array of `questions`. 
+What to check:
+- Questions **highlighted in yellow** need a look — e.g. "No answer found in the file", or fewer than 4 options found. **Save stays blocked until every question has an answer.**
+- Answers are **never guessed**: if the paper doesn't give one, the question is left unanswered and highlighted for you.
+- Scanned or photographed PDFs aren't supported.
+
+---
+
+## Method 3: Upload JSON
+
+1. Open **Sections & Questions** and click **Upload JSON**.
+2. Choose your `.json` file, then review and **Save Paper** as above.
+
+If the paper already has questions, you're asked before the new ones are added after them. Missing or unclear answers are highlighted, never set to option A.
+
+Accepted layouts: the format below (a list of sections), the same wrapped as `{"sections": [...]}`, or a plain list of questions. Answers can be `"correct_option": 0` (0 = a, 1 = b, …) or a letter such as `"answer": "b"`. Option labels like `(a)` and question numbers like `Q1.` are removed automatically.
+
+### JSON format
+
+The recommended layout is an **array of sections**. Each section contains a `title` and an array of `questions`.
 Case Study questions have `type: "case"` and define the `case_narrative` directly on the first sub-question (the system automatically groups them!).
 
 ```json
@@ -84,3 +105,5 @@ Case Study questions have `type: "case"` and define the `case_narrative` directl
 
 ### Auto-Grouping Logic:
 If the system sees consecutive questions with `type: "case"`, it automatically assumes they belong to the SAME case study block. You only need to provide the `case_narrative` on the **first question** of the cluster!
+
+A new `case_narrative` starts a new case study: when two case studies come one after another, the importer puts the second in its own section (e.g. "Part B — Case 2") so they never merge into one.

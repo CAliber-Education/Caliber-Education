@@ -1592,6 +1592,14 @@ async def admin_upsert_set(
                     status_code=400,
                     detail=f'Question {question_number} (in section "{sec_title}") has a blank answer option.'
                 )
+            # An imported question whose answer wasn't in the file carries
+            # correct_option null until someone picks one. The insert below
+            # would turn null into 0 (option A) without anyone noticing.
+            if "correct_option" in q and q["correct_option"] is None and q.get("correctOptionIndex") is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'Question {question_number} (in section "{sec_title}") has no correct answer selected.'
+                )
 
     VALID_TEST_TYPES = ("COMPLETE_GROUP", "FULL_SUBJECT", "CHAPTER_WISE")
     raw_test_type = body.get("testType") or body.get("test_type") or "FULL_SUBJECT"

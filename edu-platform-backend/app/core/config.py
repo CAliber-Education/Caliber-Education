@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # a real support inbox
     contact_notification_email: str = "adarshguptaa1108@gmail.com"
 
+    # Groq (free-tier LLM) — powers "Import from PDF" in the MCQ editor.
+    # Read from GROQ_API_KEY; without it that one feature reports itself
+    # unavailable and everything else works as normal.
+    groq_api_key: str = ""
+
     # Supabase Storage Buckets
     supabase_submission_bucket: str = "test-submissions"
     supabase_evaluation_bucket: str = "evaluated-papers"
