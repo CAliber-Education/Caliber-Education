@@ -148,30 +148,40 @@ def grade(questions: List[dict], answers: Any) -> Dict[str, Any]:
     }
 
 
-def ranked_attempts(db: Client, paper_id: str, questions: Optional[List[dict]] = None) -> List[dict]:
-    """Every student's first attempt, graded and ranked: higher marks first;
-    equal marks, the faster time first; then whoever submitted earlier.
-    Ranks are 1, 2, 3, ... with no ties."""
-    questions = questions if questions is not None else paper_questions(db, paper_id)
-    attempts = _fetch_all(lambda: db.table("quiz_attempts").select(
-        "id, user_id, user_answers, elapsed_seconds, created_at").eq("set_id", paper_id))
-    # Staff can take the test to try it out; they aren't ranked.
+def staff_ids(db: Client, user_ids: List[str]) -> set:
     staff = set()
-    user_ids = list({a["user_id"] for a in attempts})
-    for i in range(0, len(user_ids), 200):
+    for i in range(0, len(user_ids), 200):  # keep each IN (...) list short
         for p in db.table("profiles").select("id, role").in_("id", user_ids[i:i + 200]).execute().data or []:
             if p.get("role") in STAFF_ROLES:
                 staff.add(p["id"])
-    attempts = [a for a in attempts if a["user_id"] not in staff]
-    first: Dict[str, dict] = {}
+    return staff
+
+
+def ranked_attempts(db: Client, paper_id: str, questions: Optional[List[dict]] = None,
+                    include_staff: bool = False) -> List[dict]:
+    """Every student's first attempt, graded and ranked: higher marks first;
+    equal marks, the faster time first; then whoever submitted earlier.
+    Ranks are 1, 2, 3, ... with no ties.
+
+    Staff (admins, editors, mentors) can take the test to try it out. They're
+    never ranked, so they can't push a student down; with include_staff their
+    latest attempt is listed after the students, with rank None."""
+    questions = questions if questions is not None else paper_questions(db, paper_id)
+    attempts = _fetch_all(lambda: db.table("quiz_attempts").select(
+        "id, user_id, user_answers, elapsed_seconds, created_at").eq("set_id", paper_id))
+    staff = staff_ids(db, list({a["user_id"] for a in attempts}))
+    chosen: Dict[str, dict] = {}
     for a in attempts:
-        prev = first.get(a["user_id"])
-        if prev is None or (a.get("created_at") or "") < (prev.get("created_at") or ""):
-            first[a["user_id"]] = a
-    graded = []
-    for a in first.values():
+        prev = chosen.get(a["user_id"])
+        at, prev_at = a.get("created_at") or "", (prev or {}).get("created_at") or ""
+        is_staff = a["user_id"] in staff
+        # A student's first attempt counts; for staff, their latest try.
+        if prev is None or (at > prev_at if is_staff else at < prev_at):
+            chosen[a["user_id"]] = a
+
+    def row(a: dict) -> dict:
         g = grade(questions, a.get("user_answers"))
-        graded.append({
+        return {
             "userId": a["user_id"],
             "score": g["score"],
             "totalMarks": g["totalMarks"],
@@ -180,11 +190,20 @@ def ranked_attempts(db: Client, paper_id: str, questions: Optional[List[dict]] =
             "skippedCount": g["skippedCount"],
             "timeSeconds": int(a.get("elapsed_seconds") or 0),
             "submittedAt": a.get("created_at"),
-        })
-    graded.sort(key=lambda r: (-r["score"], r["timeSeconds"], r["submittedAt"] or ""))
-    for i, r in enumerate(graded):
+            "isStaff": a["user_id"] in staff,
+        }
+
+    students = [row(a) for uid, a in chosen.items() if uid not in staff]
+    students.sort(key=lambda r: (-r["score"], r["timeSeconds"], r["submittedAt"] or ""))
+    for i, r in enumerate(students):
         r["rank"] = i + 1
-    return graded
+    if not include_staff:
+        return students
+    staff_rows = [row(a) for uid, a in chosen.items() if uid in staff]
+    staff_rows.sort(key=lambda r: r["submittedAt"] or "", reverse=True)
+    for r in staff_rows:
+        r["rank"] = None
+    return students + staff_rows
 
 
 def _published_scholarship_papers(db: Client) -> List[dict]:
@@ -308,7 +327,7 @@ async def my_result(paper_id: str, current_user: dict = Depends(get_current_user
     if not paper.get("results_published_at"):
         raise HTTPException(status_code=403, detail="Results aren't out yet. You'll see them here once they're published.")
     questions = paper_questions(db, paper_id)
-    ranking = ranked_attempts(db, paper_id, questions)
+    ranking = ranked_attempts(db, paper_id, questions, include_staff=True)
     mine = next((r for r in ranking if r["userId"] == current_user["id"]), None)
     if mine is None:
         raise HTTPException(status_code=404, detail="You didn't take this test.")
@@ -316,12 +335,13 @@ async def my_result(paper_id: str, current_user: dict = Depends(get_current_user
         db.table("quiz_attempts").select("user_answers, created_at")
         .eq("set_id", paper_id).eq("user_id", current_user["id"]).execute().data or []
     )
-    first = min(attempts, key=lambda a: a.get("created_at") or "")
-    graded = grade(questions, first.get("user_answers"))
+    pick = max if mine["isStaff"] else min  # same attempt the leaderboard shows
+    graded = grade(questions, pick(attempts, key=lambda a: a.get("created_at") or "").get("user_answers"))
     return {
         "paperId": paper_id,
         "title": paper.get("title") or "All India Scholarship Test",
-        "rank": mine["rank"],
+        "rank": mine["rank"],  # None for a staff test attempt
+        "isStaff": mine["isStaff"],
         "score": graded["score"],
         "totalMarks": graded["totalMarks"],
         "correctCount": graded["correctCount"],
@@ -353,11 +373,13 @@ async def admin_list_scholarship_tests(admin: dict = Depends(require_admin), db:
     for p in sorted(papers, key=lambda p: p.get("created_at") or "", reverse=True):
         takers = {a["user_id"] for a in _fetch_all(
             lambda pid=p["id"]: db.table("quiz_attempts").select("id, user_id").eq("set_id", pid))}
+        staff = staff_ids(db, list(takers))
         out.append({
             **_paper_card(p, counts[p["id"]]),
             "status": p.get("status") or "draft",
             "resultsPublishedAt": p.get("results_published_at"),
-            "attemptCount": len(takers),
+            "attemptCount": len(takers - staff),
+            "staffAttemptCount": len(takers & staff),
         })
     return out
 
@@ -366,7 +388,7 @@ async def admin_list_scholarship_tests(admin: dict = Depends(require_admin), db:
 async def admin_leaderboard(paper_id: str, admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
     """Everyone who took the test, ranked, with their contact details."""
     paper = _load_scholarship_paper(db, paper_id)
-    ranking = ranked_attempts(db, paper_id)
+    ranking = ranked_attempts(db, paper_id, include_staff=True)
     ids = [r["userId"] for r in ranking]
     profiles: Dict[str, dict] = {}
     for i in range(0, len(ids), 200):  # keep each IN (...) list short

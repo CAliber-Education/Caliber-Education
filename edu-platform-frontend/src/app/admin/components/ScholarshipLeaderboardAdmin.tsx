@@ -108,7 +108,7 @@ export default function ScholarshipLeaderboardAdmin() {
   function downloadCsv() {
     if (!rows || !test) return;
     const header = ["Rank", "Name", "Email", "Phone", "Stage", "Marks", "Total", "Correct", "Wrong", "Not answered", "Time (s)", "Submitted"];
-    const lines = rows.map((r) => [r.rank, r.name, r.email, r.phone, r.stage, r.score, r.totalMarks, r.correctCount,
+    const lines = rows.map((r) => [r.rank ?? "Staff test", r.name, r.email, r.phone, r.stage, r.score, r.totalMarks, r.correctCount,
       r.incorrectCount, r.skippedCount, r.timeSeconds, r.submittedAt ? new Date(r.submittedAt).toLocaleString("en-IN") : ""]);
     const csv = [header, ...lines].map((l) => l.map(csvCell).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -157,7 +157,8 @@ export default function ScholarshipLeaderboardAdmin() {
           <div className="min-w-0">
             <h3 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{test.title}</h3>
             <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate dark:text-paper/60">
-              <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {test.attemptCount} took it</span>
+              <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {test.attemptCount} student{test.attemptCount === 1 ? "" : "s"} took it
+                {test.staffAttemptCount > 0 && ` · ${test.staffAttemptCount} staff test${test.staffAttemptCount === 1 ? "" : "s"}`}</span>
               <span>₹{test.price} · {test.questionCount} questions · {test.durationMinutes} min</span>
               <span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded-full ${test.status === "published" ? "bg-signal-emerald/10 text-signal-emerald" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60"}`}>
                 {test.status === "published" ? "Open for students" : test.status}
@@ -178,7 +179,7 @@ export default function ScholarshipLeaderboardAdmin() {
                 <EyeOff className="w-4 h-4" /> Hide results
               </button>
             ) : (
-              <button type="button" disabled={busy || !rows || rows.length === 0} onClick={() => setPublished(true)}
+              <button type="button" disabled={busy || !rows} onClick={() => setPublished(true)}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-bold disabled:opacity-50">
                 <Eye className="w-4 h-4" /> Publish results
               </button>
@@ -215,12 +216,19 @@ export default function ScholarshipLeaderboardAdmin() {
               </thead>
               <tbody>
                 {shown.map((r) => (
-                  <tr key={r.userId} className="border-b last:border-0 border-line-gray-light dark:border-line-gray-dark">
+                  <tr key={r.userId} className={`border-b last:border-0 border-line-gray-light dark:border-line-gray-dark ${r.isStaff ? "opacity-70" : ""}`}>
                     <td className="px-4 py-3 font-heading font-black text-ink-navy dark:text-paper">
-                      <span className="inline-flex items-center gap-1">
-                        {r.rank <= 3 && <Trophy className={`w-3.5 h-3.5 ${r.rank === 1 ? "text-amber-500" : r.rank === 2 ? "text-slate-400" : "text-orange-500"}`} />}
-                        {r.rank}
-                      </span>
+                      {r.rank === null ? (
+                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60 whitespace-nowrap"
+                          title="Staff attempts aren't ranked, so they never push a student down.">
+                          Staff test
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          {r.rank <= 3 && <Trophy className={`w-3.5 h-3.5 ${r.rank === 1 ? "text-amber-500" : r.rank === 2 ? "text-slate-400" : "text-orange-500"}`} />}
+                          {r.rank}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 min-w-[180px]">
                       <div className="font-semibold text-ink-navy dark:text-paper">{r.name || "—"}</div>
@@ -243,7 +251,7 @@ export default function ScholarshipLeaderboardAdmin() {
             </table>
           </div>
           <p className="text-xs text-slate dark:text-paper/50">
-            Ranked by marks; equal marks go to whoever finished faster. Staff attempts aren&apos;t ranked.
+            Ranked by marks; equal marks go to whoever finished faster. Staff test attempts are listed at the bottom but never ranked.
           </p>
         </div>
       )}

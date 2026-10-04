@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
 import { UpiPaymentModal, type UpiSubmitDetails } from "@/components/UpiPaymentModal";
-import ScholarshipSection from "./ScholarshipSection";
+import { useScholarship, ScholarshipBanner, ScholarshipCard } from "./ScholarshipSection";
 import {
   Search,
   Zap,
@@ -111,6 +111,11 @@ export default function MCQClient({
   }, [allSubjects, activeLevel]);
 
   // Filter subjects for display (flat catalog)
+  // Scholarship Tests sit in their level's grid next to the subjects.
+  const scholarship = useScholarship();
+  const levelScholarships = scholarship.tests.filter((t) =>
+    (t.level || "").toUpperCase() === activeLevel && t.title.toLowerCase().includes(searchQuery.toLowerCase()));
+
   const filteredSubjects = useMemo(() => {
     return levelSubjects.filter((subject) =>
       (subject.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -436,7 +441,8 @@ export default function MCQClient({
         itemLabel={`${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`}
         onSubmit={handleUpiSubmit}
       />
-      <ScholarshipSection />
+      {scholarship.overlays}
+      <ScholarshipBanner sch={scholarship} />
 
       {/* ─── Top High-Value Bundle Recommendation Header ─── */}
       <section className="relative pt-24 pb-8 overflow-hidden">
@@ -655,7 +661,7 @@ export default function MCQClient({
                   onClick={() => !isOwned && handleOpenSubjectModal(subject)}
                   className={`group relative bg-white dark:bg-slate-900/60 border rounded-3xl p-6 backdrop-blur-xl transition-all duration-300 flex flex-col justify-between ${isOwned
                       ? "border-signal-emerald/40 bg-signal-emerald/5 dark:bg-signal-emerald/5 cursor-default"
-                      : "hover:bg-white/90 dark:bg-slate-900/90 border-white/10 hover:border-emerald-500/40 hover:shadow-2xl hover:shadow-emerald-500/10 hover:-translate-y-1 cursor-pointer"
+                      : "hover:bg-white/90 dark:hover:bg-slate-900/90 border-white/10 hover:border-emerald-500/40 hover:shadow-2xl hover:shadow-emerald-500/10 hover:-translate-y-1 cursor-pointer"
                     }`}
                 >
                   {/* Glowing background card gradient */}
@@ -746,6 +752,9 @@ export default function MCQClient({
                 </motion.div>
               );
             })}
+            {levelScholarships.map((t, i) => (
+              <ScholarshipCard key={t.id} sch={scholarship} t={t} index={filteredSubjects.length + i} />
+            ))}
           </div>
         )}
       </section>

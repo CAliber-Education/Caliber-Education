@@ -46,7 +46,8 @@ export interface ScholarshipQuestionResult {
 export interface ScholarshipResult {
   paperId: string;
   title: string;
-  rank: number;
+  rank: number | null; // null for a staff test attempt
+  isStaff: boolean;
   score: number;
   totalMarks: number;
   correctCount: number;
@@ -58,7 +59,8 @@ export interface ScholarshipResult {
 }
 
 export interface ScholarshipLeaderboardRow {
-  rank: number;
+  rank: number | null; // null for staff test attempts (never ranked)
+  isStaff: boolean;
   userId: string;
   name: string;
   email: string;
@@ -77,6 +79,7 @@ export interface AdminScholarshipTest extends ScholarshipTest {
   status: string;
   resultsPublishedAt: string | null;
   attemptCount: number;
+  staffAttemptCount: number;
 }
 
 export function formatDuration(seconds: number): string {

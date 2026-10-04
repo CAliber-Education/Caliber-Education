@@ -274,3 +274,20 @@ def test_scholarship_paper_has_no_subject(make_client, db):
 def test_normal_paper_still_needs_a_subject(make_client, db):
     res = make_client(ADMIN).post("/api/admin/mcq-sets", json=_paper_body(id="n1", subjectCode=""))
     assert res.status_code == 400
+
+
+
+def test_staff_attempts_listed_unranked_and_their_result_opens(make_client, db):
+    _attempt(db, "admin-1", {"q1": 0, "q2": 1, "q3": 2}, 5, created="2026-10-05T09:00:00Z")
+    _attempt(db, "admin-1", {"q1": 3}, 5, created="2026-10-05T11:00:00Z")   # latest try is shown
+    _attempt(db, "student-1", {"q1": 0}, 50)
+    rows = make_client(ADMIN).get(f"/api/admin/scholarship-tests/{PAPER}/leaderboard").json()["rows"]
+    assert [(r["userId"], r["rank"], r["isStaff"]) for r in rows] == [("student-1", 1, False), ("admin-1", None, True)]
+    assert rows[1]["score"] == 0.0  # q1 wrong (-0.5), floored
+    listing = {t["id"]: t for t in make_client(ADMIN).get("/api/admin/scholarship-tests").json()}
+    assert (listing[PAPER]["attemptCount"], listing[PAPER]["staffAttemptCount"]) == (1, 1)
+
+    make_client(ADMIN).post(f"/api/admin/scholarship-tests/{PAPER}/publish", json={"published": True})
+    mine = make_client(ADMIN).get(f"/api/scholarship-tests/{PAPER}/my-result").json()
+    assert mine["rank"] is None and mine["isStaff"] is True and mine["score"] == 0.0
+    assert make_client(STUDENT).get(f"/api/scholarship-tests/{PAPER}/my-result").json()["rank"] == 1

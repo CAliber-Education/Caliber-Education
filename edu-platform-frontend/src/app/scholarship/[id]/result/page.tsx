@@ -94,7 +94,11 @@ export default function ScholarshipResultPage({ params }: { params: Promise<{ id
             <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
               <Trophy className="w-3.5 h-3.5" /> Your rank
             </p>
-            <p className="mt-1 font-heading font-black text-4xl text-ink-navy dark:text-paper">{result.rank}</p>
+            {result.rank === null ? (
+              <p className="mt-2 text-sm font-bold text-ink-navy dark:text-paper">Not ranked (staff test)</p>
+            ) : (
+              <p className="mt-1 font-heading font-black text-4xl text-ink-navy dark:text-paper">{result.rank}</p>
+            )}
           </motion.div>
           <Stat label="Marks" value={`${formatMarks(result.score)} / ${formatMarks(result.totalMarks)}`} />
           <Stat label="Correct · Wrong" value={`${result.correctCount} · ${result.incorrectCount}`} />
